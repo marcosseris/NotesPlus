@@ -2,7 +2,10 @@ package com.notesplus.app
 
 import android.content.Intent
 import android.net.Uri
+import android.hardware.display.DisplayManager
+import android.os.Build
 import android.os.Bundle
+import android.view.Display
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -28,6 +31,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        preferHighRefreshRate()
         handleIntent(intent)
         setContent {
             NotesPlusTheme {
@@ -48,6 +52,22 @@ class MainActivity : ComponentActivity() {
         app.container.authManager.cancelPendingSignIn()
         // Pull remote changes whenever the app comes to the foreground.
         if (app.container.authManager.isSignedIn) app.appScope.launch { app.container.syncScheduler.requestSync(delayMs = 0L) }
+    }
+
+    /**
+     * Ask for the display mode with the highest refresh rate at the native resolution.
+     * Some tablets (the Honor Pad 9 among them) keep third-party apps at 60 Hz unless asked.
+     */
+    private fun preferHighRefreshRate() {
+        val display: Display = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) display else null)
+            ?: getSystemService(DisplayManager::class.java).getDisplay(Display.DEFAULT_DISPLAY) ?: return
+        val current = display.mode
+        val best = display.supportedModes
+            .filter { it.physicalWidth == current.physicalWidth && it.physicalHeight == current.physicalHeight }
+            .maxByOrNull { it.refreshRate } ?: return
+        if (best.modeId != current.modeId) {
+            window.attributes = window.attributes.apply { preferredDisplayModeId = best.modeId }
+        }
     }
 
     private fun handleIntent(intent: Intent?) {

@@ -9,6 +9,19 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items as listItems
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.automirrored.filled.Notes
+import androidx.compose.material.icons.automirrored.filled.Sort
+import androidx.compose.material3.NavigationDrawerItem
+import androidx.compose.material3.NavigationDrawerItemDefaults
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -121,6 +134,14 @@ fun LibraryScreen(
             TopAppBar(
                 title = { Text("NotesPlus") },
                 actions = {
+                    var sortMenu by remember { mutableStateOf(false) }
+                    Box {
+                        IconButton(onClick = { sortMenu = true }) { Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = "Sort") }
+                        DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
+                            DropdownMenuItem(text = { Text(if (state.sort == LibrarySort.RECENT) "✓ Recently edited" else "Recently edited") }, onClick = { vm.setSort(LibrarySort.RECENT); sortMenu = false })
+                            DropdownMenuItem(text = { Text(if (state.sort == LibrarySort.TITLE) "✓ Title" else "Title") }, onClick = { vm.setSort(LibrarySort.TITLE); sortMenu = false })
+                        }
+                    }
                     val running = state.sync is SyncStatus.Running
                     IconButton(onClick = { vm.syncNow() }, enabled = !running) {
                         if (running) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
@@ -145,7 +166,11 @@ fun LibraryScreen(
             }
         }
     ) { padding ->
-        Column(Modifier.padding(padding).fillMaxSize()) {
+        BoxWithConstraints(Modifier.padding(padding).fillMaxSize()) {
+            val wide = maxWidth >= 720.dp
+            Row(Modifier.fillMaxSize()) {
+                if (wide) FolderPane(state, onFilter = vm::setFilter, modifier = Modifier.width(236.dp).fillMaxHeight())
+                Column(Modifier.weight(1f).fillMaxHeight()) {
             SyncBanner(state, onOpenSettings, onSync = { vm.syncNow() })
             OutlinedTextField(
                 value = state.query, onValueChange = vm::setQuery, singleLine = true,
@@ -153,12 +178,17 @@ fun LibraryScreen(
                 placeholder = { Text("Search notes") },
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
             )
+            if (!wide) FilterChips(state, onFilter = vm::setFilter)
             if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             if (state.notes.isEmpty()) {
                 EmptyLibrary(onImport = { pickPdf.launch(arrayOf("application/pdf")) }, onNew = { showNewNotebook = true })
+            } else if (state.filtered.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("Nothing here matches", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             } else {
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(170.dp),
+                    columns = GridCells.Adaptive(if (wide) 188.dp else 160.dp),
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 96.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -175,6 +205,8 @@ fun LibraryScreen(
                             }
                         )
                     }
+                }
+            }
                 }
             }
         }
@@ -214,6 +246,49 @@ fun LibraryScreen(
             confirmButton = { TextButton(onClick = { vm.delete(note.id, alsoRemote); deleteTarget = null }) { Text("Delete") } },
             dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("Cancel") } }
         )
+    }
+}
+
+private fun filterLabel(f: LibraryFilter) = when (f) {
+    LibraryFilter.All -> "All notes"; LibraryFilter.Notebooks -> "Notebooks"; LibraryFilter.Pdfs -> "PDFs"
+    is LibraryFilter.Folder -> f.dir.substringAfterLast('/')
+}
+
+/** Left pane on tablets: quick filters plus the OneDrive subfolders found in the library. */
+@Composable
+private fun FolderPane(state: LibraryState, onFilter: (LibraryFilter) -> Unit, modifier: Modifier) {
+    Surface(tonalElevation = 1.dp, modifier = modifier) {
+        Column(Modifier.fillMaxHeight().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 8.dp)) {
+            val colors = NavigationDrawerItemDefaults.colors()
+            NavigationDrawerItem(label = { Text("All notes") }, icon = { Icon(Icons.AutoMirrored.Filled.Notes, null) }, selected = state.filter == LibraryFilter.All, onClick = { onFilter(LibraryFilter.All) }, colors = colors)
+            NavigationDrawerItem(label = { Text("PDFs") }, icon = { Icon(Icons.Default.PictureAsPdf, null) }, selected = state.filter == LibraryFilter.Pdfs, onClick = { onFilter(LibraryFilter.Pdfs) }, colors = colors)
+            NavigationDrawerItem(label = { Text("Notebooks") }, icon = { Icon(Icons.Default.Edit, null) }, selected = state.filter == LibraryFilter.Notebooks, onClick = { onFilter(LibraryFilter.Notebooks) }, colors = colors)
+            if (state.folders.isNotEmpty()) {
+                Text("Folders", Modifier.padding(start = 16.dp, top = 16.dp, bottom = 6.dp), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                state.folders.forEach { dir ->
+                    val depth = dir.count { it == '/' }
+                    val selected = (state.filter as? LibraryFilter.Folder)?.dir == dir
+                    NavigationDrawerItem(
+                        label = { Text(dir.substringAfterLast('/'), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        icon = { Icon(if (selected) Icons.Default.FolderOpen else Icons.Default.Folder, null) },
+                        selected = selected, onClick = { onFilter(LibraryFilter.Folder(dir)) }, colors = colors,
+                        modifier = Modifier.padding(start = (depth * 12).dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Compact alternative to [FolderPane] on narrow screens. */
+@Composable
+private fun FilterChips(state: LibraryState, onFilter: (LibraryFilter) -> Unit) {
+    val filters = listOf(LibraryFilter.All, LibraryFilter.Pdfs, LibraryFilter.Notebooks) + state.folders.map { LibraryFilter.Folder(it) }
+    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listItems(filters) { f ->
+            FilterChip(selected = state.filter == f, onClick = { onFilter(f) }, label = { Text(filterLabel(f)) },
+                leadingIcon = if (f is LibraryFilter.Folder) ({ Icon(Icons.Default.Folder, null, Modifier.size(16.dp)) }) else null)
+        }
     }
 }
 

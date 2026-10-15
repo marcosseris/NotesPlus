@@ -11,6 +11,10 @@ import com.notesplus.app.editor.PageSource
 import com.notesplus.app.editor.PdfPageSource
 import com.notesplus.app.ink.InkDocument
 import com.notesplus.app.ink.PageSize
+import com.notesplus.app.ink.ShapeKind
+import android.graphics.Bitmap
+import android.graphics.Matrix
+import android.util.LruCache
 import com.notesplus.app.onedrive.SyncStatus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -45,7 +49,12 @@ data class EditorState(
     val canRedo: Boolean = false,
     val unsaved: Boolean = false,
     val sync: SyncStatus = SyncStatus.Idle,
-    val strokeCount: Int = 0
+    val strokeCount: Int = 0,
+    val shapeKind: ShapeKind = ShapeKind.LINE,
+    val autoShape: Boolean = true,
+    val railOnRight: Boolean = false,
+    val motionPrediction: Boolean = true,
+    val showPages: Boolean = false
 )
 
 sealed class EditorEvent {
@@ -87,7 +96,9 @@ class EditorViewModel(private val app: NotesPlusApp, private val noteId: String)
             _state.update {
                 it.copy(
                     penColor = s.penColor, penWidth = s.penWidth, highlighterColor = s.highlighterColor, highlighterWidth = s.highlighterWidth,
-                    eraserRadius = s.eraserRadius, fingerDraws = s.fingerDrawing, stylusButtonErases = s.stylusButtonErases
+                    eraserRadius = s.eraserRadius, fingerDraws = s.fingerDrawing, stylusButtonErases = s.stylusButtonErases,
+                    autoShape = s.autoShape, railOnRight = s.railOnRight, motionPrediction = s.motionPrediction,
+                    shapeKind = ShapeKind.entries.getOrElse(s.lastShape) { ShapeKind.LINE }
                 )
             }
         }
@@ -170,6 +181,40 @@ class EditorViewModel(private val app: NotesPlusApp, private val noteId: String)
     fun setFingerDraws(v: Boolean) {
         _state.update { it.copy(fingerDraws = v) }
         viewModelScope.launch { c.prefs.setFingerDrawing(v) }
+    }
+
+    fun setShapeKind(k: ShapeKind) {
+        _state.update { it.copy(shapeKind = k, tool = DocumentView.Tool.SHAPE) }
+        viewModelScope.launch { c.prefs.setLastShape(k.ordinal) }
+    }
+
+    fun setAutoShape(v: Boolean) {
+        _state.update { it.copy(autoShape = v) }
+        viewModelScope.launch { c.prefs.setAutoShape(v) }
+    }
+
+    fun togglePages() = _state.update { it.copy(showPages = !it.showPages) }
+
+    fun rename(title: String) = viewModelScope.launch { if (title.isNotBlank()) repo.rename(noteId, title) }
+
+    // ---------------------------------------------------------------- page navigator thumbnails
+
+    private val thumbCache = LruCache<Int, Bitmap>(64)
+
+    /** Small raster of page [index] for the page navigator (page content only, no ink). */
+    suspend fun pageThumbnail(index: Int, widthPx: Int = 220): Bitmap? {
+        thumbCache.get(index)?.let { return it }
+        val src = pageSource ?: return null
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val size = src.pageSize(index)
+                val scale = widthPx / size.w
+                val bmp = Bitmap.createBitmap(widthPx, (size.h * scale).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+                src.render(index, bmp, Matrix().apply { setScale(scale, scale) }, null)
+                thumbCache.put(index, bmp)
+                bmp
+            }.getOrNull()
+        }
     }
 
     fun export() = viewModelScope.launch {

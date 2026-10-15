@@ -35,7 +35,13 @@ data class Settings(
     val highlighterColor: Int = 0xFFFFE627.toInt(),
     val highlighterWidth: Float = 14f,
     val eraserRadius: Float = 10f,
-    val defaultPaper: Int = 1
+    val defaultPaper: Int = 1,
+    /** Pause the pen at the end of a stroke to snap it to a line / shape. */
+    val autoShape: Boolean = true,
+    /** Put the tool rail on the right (left-handed users). */
+    val railOnRight: Boolean = false,
+    val lastShape: Int = 0,
+    val motionPrediction: Boolean = true
 ) {
     val effectiveClientId: String get() = clientIdOverride.ifBlank { BuildConfig.ONEDRIVE_CLIENT_ID }
 }
@@ -60,6 +66,10 @@ class Prefs(private val context: Context) {
         val hlWidth = floatPreferencesKey("hl_width")
         val eraserRadius = floatPreferencesKey("eraser_radius")
         val defaultPaper = intPreferencesKey("default_paper")
+        val autoShape = booleanPreferencesKey("auto_shape")
+        val railOnRight = booleanPreferencesKey("rail_on_right")
+        val lastShape = intPreferencesKey("last_shape")
+        val motionPrediction = booleanPreferencesKey("motion_prediction")
     }
 
     val settings: Flow<Settings> = context.dataStore.data.map { p ->
@@ -82,7 +92,11 @@ class Prefs(private val context: Context) {
             highlighterColor = p[K.hlColor] ?: d.highlighterColor,
             highlighterWidth = p[K.hlWidth] ?: d.highlighterWidth,
             eraserRadius = p[K.eraserRadius] ?: d.eraserRadius,
-            defaultPaper = p[K.defaultPaper] ?: d.defaultPaper
+            defaultPaper = p[K.defaultPaper] ?: d.defaultPaper,
+            autoShape = p[K.autoShape] ?: d.autoShape,
+            railOnRight = p[K.railOnRight] ?: d.railOnRight,
+            lastShape = p[K.lastShape] ?: d.lastShape,
+            motionPrediction = p[K.motionPrediction] ?: d.motionPrediction
         )
     }
 
@@ -106,6 +120,10 @@ class Prefs(private val context: Context) {
     suspend fun setHighlighter(color: Int, width: Float) = context.dataStore.edit { it[K.hlColor] = color; it[K.hlWidth] = width }
     suspend fun setEraserRadius(v: Float) = context.dataStore.edit { it[K.eraserRadius] = v }
     suspend fun setDefaultPaper(v: Int) = context.dataStore.edit { it[K.defaultPaper] = v }
+    suspend fun setAutoShape(v: Boolean) = context.dataStore.edit { it[K.autoShape] = v }
+    suspend fun setRailOnRight(v: Boolean) = context.dataStore.edit { it[K.railOnRight] = v }
+    suspend fun setLastShape(v: Int) = context.dataStore.edit { it[K.lastShape] = v }
+    suspend fun setMotionPrediction(v: Boolean) = context.dataStore.edit { it[K.motionPrediction] = v }
 
     /** Called on sign-out: forget everything tied to the account but keep local notes. */
     suspend fun clearAccountState() = context.dataStore.edit {

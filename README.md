@@ -5,7 +5,16 @@ OneDrive sync that never loses an annotation.
 
 * **Stylus-first inking** – pressure-sensitive pen, highlighter (multiply blend), stroke
   eraser, undo/redo, palm rejection, side-button-to-erase, finger pan/pinch-zoom,
-  double-tap zoom, mouse-wheel scrolling on Chromebooks.
+  double-tap zoom, mouse-wheel scrolling on Chromebooks, platform motion prediction so the
+  ink keeps up with the pen tip.
+* **Shapes** – a shape tool (line, arrow, rectangle, ellipse, triangle; hold the pen button or
+  Shift for squares/circles/45° lines) and *hold-to-snap*: pause the pen at the end of a rough
+  stroke and it turns into a clean line, polyline, rectangle, triangle or ellipse. Both can be
+  turned off in Settings.
+* **Tablet UI** – on screens 600 dp and wider (both orientations of the Honor Pad 9) tools sit
+  on a vertical rail next to the page, with colours, three width presets, undo/redo and a page
+  thumbnail navigator; the rail can be moved to the right for left-handed use. Phones get a
+  bottom bar instead. Library has a folder pane, filters and sorting.
 * **PDF lecture notes** – open any PDF (import from the device, "Open with" from another
   app, or simply drop it in your OneDrive folder). Pages render crisply at any zoom.
 * **Blank notebooks** – ruled / grid / dotted / plain paper, add pages as you go.
@@ -17,6 +26,24 @@ OneDrive sync that never loses an annotation.
   editing the same note offline merge cleanly instead of overwriting each other.
 * **Export** – "Export annotated PDF" writes your ink into a copy of the PDF as real vector
   content (sharp, small, opens anywhere). Optionally uploaded automatically on every sync.
+
+## Honor Pad 9 notes
+
+The app was tuned for this tablet (12.1" 2560×1600, 120 Hz, Magic-Pencil):
+
+* The activity requests the display's highest refresh-rate mode, so inking runs at 120 Hz
+  instead of the 60 Hz some vendors default third-party apps to.
+* Pages open at *fit page* in landscape (whole page visible, centred) and zoom from there;
+  crisp viewport patches are rendered at the exact on-screen scale, so 2560 px wide pages stay
+  sharp without holding full-page bitmaps at that size in memory.
+* Stylus input is dispatched unbuffered, all historical samples are consumed and a predicted
+  tail is drawn using `androidx.input:input-motionprediction`.
+* Palm rejection ignores finger touches while the pen is down or hovering; the pen's side
+  button erases; pressure from the Magic-Pencil drives pen width.
+* The screen stays on while a note is open.
+
+Keyboard shortcuts (with a Bluetooth keyboard): `P` pen, `H` highlighter, `E` eraser,
+`S` shapes, `Space` pan, `Ctrl+Z` / `Ctrl+Shift+Z` undo/redo, `Ctrl +/-/0` zoom, `PgUp/PgDn`.
 
 ## Building
 
@@ -80,7 +107,8 @@ OneDrive/<folder>/
 
 ```
 app/src/main/java/com/notesplus/app/
-  ink/        InkModel (format + merge), InkGeometry (pressure outlines, eraser hit-tests)
+  ink/        InkModel (format + merge), InkGeometry (pressure outlines, eraser hit-tests),
+              Shapes (shape tool builder + hold-to-snap recogniser)
   editor/     DocumentView (stylus input, zoom/scroll, drawing), PageSource, PageRenderer, UndoManager
   data/       Room database, NoteRepository (files + per-note locking), Prefs (DataStore)
   onedrive/   AuthManager (PKCE), GraphClient, SyncEngine, SyncWorker/SyncScheduler

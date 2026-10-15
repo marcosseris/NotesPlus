@@ -9,6 +9,7 @@ import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.graphics.RectF
 import android.os.SystemClock
+import android.view.HapticFeedbackConstants
 import android.util.AttributeSet
 import android.view.GestureDetector
 import android.view.InputDevice
@@ -22,8 +23,12 @@ import android.widget.OverScroller
 import com.notesplus.app.ink.InkDocument
 import com.notesplus.app.ink.InkGeometry
 import com.notesplus.app.ink.InkMerge
+import com.notesplus.app.ink.ShapeBuilder
+import com.notesplus.app.ink.ShapeKind
+import com.notesplus.app.ink.ShapeRecognizer
 import com.notesplus.app.ink.Stroke
 import com.notesplus.app.ink.ToolType
+import androidx.input.motionprediction.MotionEventPredictor
 import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -44,11 +49,15 @@ import kotlin.math.min
  */
 class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null) : View(context, attrs) {
 
-    enum class Tool { PEN, HIGHLIGHTER, ERASER, PAN }
+    enum class Tool { PEN, HIGHLIGHTER, ERASER, SHAPE, PAN }
 
     interface Listener {
         fun onInkChanged(doc: InkDocument, canUndo: Boolean, canRedo: Boolean)
         fun onViewportChanged(currentPage: Int, pageCount: Int, zoom: Float)
+        /** A keyboard shortcut asked for a tool (p/h/e/s/space) – the host updates its state. */
+        fun onToolShortcut(tool: Tool) {}
+        /** A hand-drawn stroke was snapped to a shape (for a small toast / haptic in the host). */
+        fun onShapeSnapped() {}
     }
 
     var listener: Listener? = null
@@ -64,6 +73,14 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
     var eraserRadius: Float = 10f
     var fingerDraws: Boolean = false
     var stylusButtonErases: Boolean = true
+    /** Shape drawn by the SHAPE tool. */
+    var shapeKind: ShapeKind = ShapeKind.LINE
+    /** Pause the pen at the end of a stroke to turn it into a clean line / shape. */
+    var autoShape: Boolean = true
+    /** How long the pen has to rest before a stroke is snapped. */
+    var autoShapeHoldMs: Long = 550L
+    /** Use the platform motion predictor to draw a short predicted tail (cuts perceived lag). */
+    var motionPrediction: Boolean = true
 
     // ----------------------------------------------------------------- document
     private var source: PageSource? = null
@@ -83,7 +100,9 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
     private var docWidth = 0f
     private var docHeight = 0f
     private var zoom = 1f
-    private val minZoom = 1f
+    /** Zoom at which the first page is fully visible (can be < 1 in landscape). */
+    private var fitPageZoom = 1f
+    private var minZoom = 1f
     private val maxZoom = 8f
     private var offX = 0f
     private var offY = 0f
@@ -117,6 +136,17 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
     private val erasedThisGesture = ArrayList<Stroke>()
     private var lastStylusTime = 0L
     private var eraserCursor: FloatArray? = null  // screen x, y, radius px
+    private var penCursor: FloatArray? = null     // screen x, y (stylus hovering)
+
+    // Shape tool drag and hold-to-snap.
+    private var shapeStart: FloatArray? = null    // page coords
+    private var shapeEnd: FloatArray? = null
+    private var shapeConstrain = false
+    private var strokeConsumed = false            // stroke already committed by a snap; ignore until up
+    private var lastMoveTime = 0L
+    private val holdRunnable = Runnable { trySnapCurrentStroke() }
+    private var predictor: MotionEventPredictor? = null
+    private var predictedPts = FloatArray(0)
 
     private var gestureActive = false
     private var lastFocusX = 0f
@@ -136,7 +166,7 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
 
     private val tapDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
         override fun onDoubleTap(e: MotionEvent): Boolean {
-            val target = if (zoom > 1.05f) 1f else 2.2f
+            val target = if (zoom > minZoom * 1.05f) minZoom else max(1f, minZoom) * 2.2f
             animateZoomTo(target, e.x, e.y)
             return true
         }
@@ -166,6 +196,8 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
         renderer = PageRenderer(source) { postInvalidateOnAnimation() }
         zoom = 1f; offX = 0f; offY = 0f
         relayout()
+        zoom = minZoom
+        clampOffsets()
         if (initialPage > 0) scrollToPage(initialPage)
         lastNotifiedPage = -1
         notifyViewport(force = true)
@@ -223,12 +255,18 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
 
     fun zoomLevel() = zoom
 
-    fun resetZoom() { animateZoomTo(1f, width / 2f, height / 2f) }
+    /** Fit the whole page on screen. */
+    fun fitPage() { animateZoomTo(minZoom, width / 2f, height / 2f) }
+
+    /** Fit the page width to the screen. */
+    fun fitWidth() { animateZoomTo(1f, width / 2f, height / 2f) }
+
+    fun resetZoom() = fitPage()
 
     fun release() {
         renderer?.close(); renderer = null
         source = null
-        removeCallbacks(patchRunnable); removeCallbacks(viewportRunnable)
+        removeCallbacks(patchRunnable); removeCallbacks(viewportRunnable); removeCallbacks(holdRunnable)
     }
 
     // ================================================================== layout
@@ -258,6 +296,11 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
         }
         docWidth = width.toFloat()
         docHeight = y - gapPx + marginPx
+        // Zoom that shows the tallest-of-the-first-pages completely (matters in landscape on a tablet).
+        val firstH = pageRects.first().height() + 2 * marginPx
+        fitPageZoom = if (height > 0) min(1f, height / firstH) else 1f
+        minZoom = min(1f, fitPageZoom)
+        if (zoom < minZoom) zoom = minZoom
         if (pendingScrollFraction >= 0f) { offY = pendingScrollFraction * docHeight * zoom; pendingScrollFraction = -1f }
         clampOffsets()
     }
@@ -269,14 +312,21 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
         offY = offY.coerceIn(0f, maxY)
     }
 
+    /** Horizontal offset including centring when the content is narrower than the view. */
+    private fun effOffX(): Float {
+        val contentW = docWidth * zoom
+        return if (contentW < width) -(width - contentW) / 2f else offX
+    }
+
     private fun pageScreenRect(i: Int, out: RectF = RectF()): RectF {
         val r = pageRects[i]
-        out.set(r.left * zoom - offX, r.top * zoom - offY, r.right * zoom - offX, r.bottom * zoom - offY)
+        val ox = effOffX()
+        out.set(r.left * zoom - ox, r.top * zoom - offY, r.right * zoom - ox, r.bottom * zoom - offY)
         return out
     }
 
     private fun pageAtScreen(sx: Float, sy: Float): Int {
-        val dx = (sx + offX) / zoom; val dy = (sy + offY) / zoom
+        val dx = (sx + effOffX()) / zoom; val dy = (sy + offY) / zoom
         for (i in pageRects.indices) if (pageRects[i].contains(dx, dy)) return i
         return -1
     }
@@ -285,7 +335,7 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
     private fun screenToPage(i: Int, sx: Float, sy: Float, out: FloatArray) {
         val r = pageRects[i]
         val s = source!!.pageSize(i)
-        val px = ((sx + offX) / zoom - r.left) / baseScale
+        val px = ((sx + effOffX()) / zoom - r.left) / baseScale
         val py = ((sy + offY) / zoom - r.top) / baseScale
         out[0] = px.coerceIn(0f, s.w); out[1] = py.coerceIn(0f, s.h)
     }
@@ -296,7 +346,7 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
         val newZoom = (zoom * factor).coerceIn(minZoom, maxZoom)
         if (newZoom == zoom) return
         // Keep the document point under the focus fixed.
-        val docX = (fx + offX) / zoom; val docY = (fy + offY) / zoom
+        val docX = (fx + effOffX()) / zoom; val docY = (fy + offY) / zoom
         zoom = newZoom
         offX = docX * zoom - fx; offY = docY * zoom - fy
         clampOffsets()
@@ -422,7 +472,7 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
 
             // Ink.
             val page = ink.page(i)
-            val hasCurrent = drawingPointerId != -1 && drawingPage == i && !erasing && curPts.size >= 3
+            val hasCurrent = drawingPointerId != -1 && drawingPage == i && !erasing && !strokeConsumed && (curPts.size >= 3 || shapeStart != null)
             if ((page != null && page.strokes.isNotEmpty()) || hasCurrent) {
                 val save = canvas.save()
                 canvas.clipRect(sr)
@@ -434,6 +484,7 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
             }
         }
         eraserCursor?.let { c -> canvas.drawCircle(c[0], c[1], c[2], eraserFill); canvas.drawCircle(c[0], c[1], c[2], eraserPaint) }
+        penCursor?.let { c -> canvas.drawCircle(c[0], c[1], 2.5f * density, eraserPaint) }
         if (anyPatchMissing && src.isPdf && !scaling && !gestureActive && scroller.isFinished) schedulePatches()
     }
 
@@ -481,7 +532,16 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
     }
 
     private fun drawCurrentStroke(c: Canvas) {
-        val pts = curPts.toArray()
+        val start = shapeStart
+        if (start != null) {
+            val end = shapeEnd ?: start
+            penPaint.color = curColor
+            for (line in ShapeBuilder.build(shapeKind, start[0], start[1], end[0], end[1], shapeConstrain)) {
+                c.drawPath(buildPath(ToolType.PEN, ShapeBuilder.toStrokePoints(line), curWidth), penPaint)
+            }
+            return
+        }
+        val pts = if (predictedPts.isEmpty()) curPts.toArray() else curPts.toArray() + predictedPts
         when (drawingMode) {
             ToolType.PEN -> { penPaint.color = curColor; c.drawPath(buildPath(ToolType.PEN, pts, curWidth), penPaint) }
             ToolType.HIGHLIGHTER -> {
@@ -530,9 +590,15 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
             MotionEvent.ACTION_MOVE -> {
                 if (drawingPointerId != -1) {
                     val pi = ev.findPointerIndex(drawingPointerId)
-                    if (pi >= 0) {
-                        for (h in 0 until ev.historySize) addPoint(ev.getHistoricalX(pi, h), ev.getHistoricalY(pi, h), ev.getHistoricalPressure(pi, h))
-                        addPoint(ev.getX(pi), ev.getY(pi), ev.getPressure(pi))
+                    if (pi >= 0 && !strokeConsumed) {
+                        if (shapeStart != null) {
+                            shapeConstrain = (ev.buttonState and MotionEvent.BUTTON_STYLUS_PRIMARY) != 0 || (ev.metaState and KeyEvent.META_SHIFT_ON) != 0
+                            updateShapeEnd(ev.getX(pi), ev.getY(pi))
+                        } else {
+                            for (h in 0 until ev.historySize) addPoint(ev.getHistoricalX(pi, h), ev.getHistoricalY(pi, h), ev.getHistoricalPressure(pi, h))
+                            addPoint(ev.getX(pi), ev.getY(pi), ev.getPressure(pi))
+                            updatePrediction(ev)
+                        }
                         if (drawingIsStylus) lastStylusTime = now
                         invalidate()
                     }
@@ -553,8 +619,13 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
                 val pid = ev.getPointerId(idx)
                 if (pid == drawingPointerId) {
                     val pi = idx
-                    for (h in 0 until ev.historySize) addPoint(ev.getHistoricalX(pi, h), ev.getHistoricalY(pi, h), ev.getHistoricalPressure(pi, h))
-                    addPoint(ev.getX(pi), ev.getY(pi), ev.getPressure(pi))
+                    if (!strokeConsumed) {
+                        if (shapeStart != null) updateShapeEnd(ev.getX(pi), ev.getY(pi))
+                        else {
+                            for (h in 0 until ev.historySize) addPoint(ev.getHistoricalX(pi, h), ev.getHistoricalY(pi, h), ev.getHistoricalPressure(pi, h))
+                            addPoint(ev.getX(pi), ev.getY(pi), ev.getPressure(pi))
+                        }
+                    }
                     if (drawingIsStylus) lastStylusTime = now
                     finishStroke()
                     return true
@@ -593,15 +664,40 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
             lastStylusTime = SystemClock.uptimeMillis()
             val erase = tool == Tool.ERASER || tt == MotionEvent.TOOL_TYPE_ERASER ||
                 (stylusButtonErases && (ev.buttonState and MotionEvent.BUTTON_STYLUS_PRIMARY) != 0)
-            if (ev.actionMasked == MotionEvent.ACTION_HOVER_EXIT || !erase) {
-                if (eraserCursor != null) { eraserCursor = null; invalidate() }
-            } else {
+            if (ev.actionMasked == MotionEvent.ACTION_HOVER_EXIT) {
+                eraserCursor = null; penCursor = null; invalidate()
+            } else if (erase) {
+                penCursor = null
                 eraserCursor = floatArrayOf(ev.x, ev.y, eraserRadius * baseScale * zoom)
+                invalidate()
+            } else {
+                eraserCursor = null
+                penCursor = floatArrayOf(ev.x, ev.y)
                 invalidate()
             }
             return true
         }
         return super.onHoverEvent(ev)
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        val ctrl = event.isCtrlPressed
+        when {
+            ctrl && keyCode == KeyEvent.KEYCODE_Z && event.isShiftPressed -> { redo(); return true }
+            ctrl && keyCode == KeyEvent.KEYCODE_Z -> { undo(); return true }
+            ctrl && keyCode == KeyEvent.KEYCODE_Y -> { redo(); return true }
+            ctrl && (keyCode == KeyEvent.KEYCODE_PLUS || keyCode == KeyEvent.KEYCODE_EQUALS) -> { zoomBy(1.2f, width / 2f, height / 2f); schedulePatches(); return true }
+            ctrl && keyCode == KeyEvent.KEYCODE_MINUS -> { zoomBy(1 / 1.2f, width / 2f, height / 2f); schedulePatches(); return true }
+            ctrl && keyCode == KeyEvent.KEYCODE_0 -> { fitPage(); return true }
+            !ctrl && keyCode == KeyEvent.KEYCODE_P -> { listener?.onToolShortcut(Tool.PEN); return true }
+            !ctrl && keyCode == KeyEvent.KEYCODE_H -> { listener?.onToolShortcut(Tool.HIGHLIGHTER); return true }
+            !ctrl && keyCode == KeyEvent.KEYCODE_E -> { listener?.onToolShortcut(Tool.ERASER); return true }
+            !ctrl && keyCode == KeyEvent.KEYCODE_S -> { listener?.onToolShortcut(Tool.SHAPE); return true }
+            !ctrl && keyCode == KeyEvent.KEYCODE_SPACE -> { listener?.onToolShortcut(Tool.PAN); return true }
+            keyCode == KeyEvent.KEYCODE_PAGE_DOWN -> { scrollToPage(currentPage() + 1); return true }
+            keyCode == KeyEvent.KEYCODE_PAGE_UP -> { scrollToPage(currentPage() - 1); return true }
+        }
+        return super.onKeyDown(keyCode, event)
     }
 
     override fun onGenericMotionEvent(ev: MotionEvent): Boolean {
@@ -676,8 +772,12 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
         drawingIsStylus = isStylus
         drawingPage = page
         erasing = erase
+        strokeConsumed = false
         erasedThisGesture.clear()
         curPts.clear()
+        predictedPts = FloatArray(0)
+        shapeStart = null; shapeEnd = null
+        penCursor = null
         if (!erase) {
             drawingMode = if (tool == Tool.HIGHLIGHTER) ToolType.HIGHLIGHTER else ToolType.PEN
             curColor = if (drawingMode == ToolType.HIGHLIGHTER) highlighterColor else penColor
@@ -685,11 +785,75 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
         }
         val p = FloatArray(2)
         screenToPage(page, ev.getX(idx), ev.getY(idx), p)
-        if (erase) { lastEraseX = p[0]; lastEraseY = p[1]; eraseAt(p[0], p[1], p[0], p[1]); eraserCursor = floatArrayOf(ev.getX(idx), ev.getY(idx), eraserRadius * baseScale * zoom) }
-        else curPts.add(p[0], p[1], normalizePressure(ev.getPressure(idx), isStylus))
+        when {
+            erase -> { lastEraseX = p[0]; lastEraseY = p[1]; eraseAt(p[0], p[1], p[0], p[1]); eraserCursor = floatArrayOf(ev.getX(idx), ev.getY(idx), eraserRadius * baseScale * zoom) }
+            tool == Tool.SHAPE -> { shapeStart = p.copyOf(); shapeEnd = p.copyOf(); shapeConstrain = false }
+            else -> {
+                curPts.add(p[0], p[1], normalizePressure(ev.getPressure(idx), isStylus))
+                lastMoveTime = SystemClock.uptimeMillis()
+                if (isStylus && motionPrediction) {
+                    if (predictor == null) predictor = runCatching { MotionEventPredictor.newInstance(this) }.getOrNull()
+                    predictor?.record(ev)
+                }
+            }
+        }
         parent?.requestDisallowInterceptTouchEvent(true)
         return true
     }
+
+    private fun updateShapeEnd(sx: Float, sy: Float) {
+        val p = FloatArray(2)
+        screenToPage(drawingPage, sx, sy, p)
+        shapeEnd = p
+    }
+
+    private fun updatePrediction(ev: MotionEvent) {
+        val pr = predictor ?: return
+        if (!drawingIsStylus || !motionPrediction) return
+        pr.record(ev)
+        val predicted = pr.predict()
+        if (predicted == null) { predictedPts = FloatArray(0); return }
+        val out = FloatArray((predicted.historySize + 1) * 3)
+        var k = 0
+        val tmp = FloatArray(2)
+        for (h in 0 until predicted.historySize) {
+            screenToPage(drawingPage, predicted.getHistoricalX(h), predicted.getHistoricalY(h), tmp)
+            out[k++] = tmp[0]; out[k++] = tmp[1]; out[k++] = normalizePressure(predicted.getHistoricalPressure(h), true)
+        }
+        screenToPage(drawingPage, predicted.x, predicted.y, tmp)
+        out[k++] = tmp[0]; out[k++] = tmp[1]; out[k] = normalizePressure(predicted.pressure, true)
+        predicted.recycle()
+        predictedPts = out
+    }
+
+    /** Hold-to-snap: called when the pen rested for [autoShapeHoldMs] during a stroke. */
+    private fun trySnapCurrentStroke() {
+        if (drawingPointerId == -1 || erasing || strokeConsumed || shapeStart != null || !autoShape) return
+        if (SystemClock.uptimeMillis() - lastMoveTime < autoShapeHoldMs - 20) return
+        val pts = curPts.toArray()
+        if (InkGeometry.length(pts) < 12f) return
+        val result = ShapeRecognizer.recognize(pts) ?: return
+        val strokes = result.polylines().map { toStroke(it) }
+        if (strokes.isEmpty()) return
+        var doc = ink
+        strokes.forEach { doc = doc.addStroke(drawingPage, it) }
+        ink = doc
+        undo.record(UndoManager.Op.Add(drawingPage, strokes))
+        strokeConsumed = true
+        curPts.clear(); predictedPts = FloatArray(0)
+        performHapticFeedback(
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) HapticFeedbackConstants.CONFIRM
+            else HapticFeedbackConstants.LONG_PRESS
+        )
+        listener?.onShapeSnapped()
+        emitInkChanged()
+        invalidate()
+    }
+
+    private fun toStroke(xy: FloatArray): Stroke = Stroke(
+        id = UUID.randomUUID().toString(), tool = drawingMode, color = curColor, width = curWidth,
+        t = System.currentTimeMillis(), pts = ShapeBuilder.toStrokePoints(xy, if (drawingMode == ToolType.PEN) 0.6f else 0.5f)
+    )
 
     private fun normalizePressure(p: Float, stylus: Boolean): Float {
         if (!stylus) return 0.55f
@@ -711,7 +875,12 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
         val n = curPts.size / 3
         if (n > 0) {
             val lx = curPts[(n - 1) * 3]; val ly = curPts[(n - 1) * 3 + 1]
-            if (hypot(x - lx, y - ly) < MIN_POINT_DISTANCE) return
+            val d = hypot(x - lx, y - ly)
+            if (d < MIN_POINT_DISTANCE) return
+            if (d > HOLD_MOVE_TOLERANCE) {
+                lastMoveTime = SystemClock.uptimeMillis()
+                if (autoShape) { removeCallbacks(holdRunnable); postDelayed(holdRunnable, autoShapeHoldMs) }
+            }
         }
         curPts.add(x, y, normalizePressure(pressure, drawingIsStylus))
     }
@@ -728,8 +897,22 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
 
     private fun finishStroke() {
         if (drawingPointerId == -1) return
+        removeCallbacks(holdRunnable)
         val page = drawingPage
-        if (erasing) {
+        val start = shapeStart
+        if (strokeConsumed) {
+            // Already committed by hold-to-snap.
+        } else if (start != null) {
+            val end = shapeEnd ?: start
+            if (hypot(end[0] - start[0], end[1] - start[1]) >= 2f) {
+                val strokes = ShapeBuilder.build(shapeKind, start[0], start[1], end[0], end[1], shapeConstrain).map { toStroke(it) }
+                var doc = ink
+                strokes.forEach { doc = doc.addStroke(page, it) }
+                ink = doc
+                undo.record(UndoManager.Op.Add(page, strokes))
+                emitInkChanged()
+            }
+        } else if (erasing) {
             if (erasedThisGesture.isNotEmpty()) {
                 undo.record(UndoManager.Op.Erase(page, erasedThisGesture.toList()))
                 emitInkChanged()
@@ -743,8 +926,9 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
             undo.record(UndoManager.Op.Add(page, listOf(stroke)))
             emitInkChanged()
         }
-        drawingPointerId = -1; drawingPage = -1; erasing = false
-        curPts.clear(); erasedThisGesture.clear()
+        drawingPointerId = -1; drawingPage = -1; erasing = false; strokeConsumed = false
+        curPts.clear(); erasedThisGesture.clear(); predictedPts = FloatArray(0)
+        shapeStart = null; shapeEnd = null
         if (tool != Tool.ERASER) eraserCursor = null
         invalidate()
     }
@@ -752,8 +936,10 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
     private fun finishStrokeIfAny() { if (drawingPointerId != -1) finishStroke() }
 
     private fun cancelStroke() {
-        drawingPointerId = -1; drawingPage = -1; erasing = false
-        curPts.clear(); erasedThisGesture.clear(); eraserCursor = null
+        removeCallbacks(holdRunnable)
+        drawingPointerId = -1; drawingPage = -1; erasing = false; strokeConsumed = false
+        curPts.clear(); erasedThisGesture.clear(); eraserCursor = null; predictedPts = FloatArray(0)
+        shapeStart = null; shapeEnd = null
         invalidate()
     }
 
@@ -761,7 +947,7 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
-        removeCallbacks(patchRunnable); removeCallbacks(viewportRunnable)
+        removeCallbacks(patchRunnable); removeCallbacks(viewportRunnable); removeCallbacks(holdRunnable)
     }
 
     /** Growable float list to avoid boxing in the hot input path. */
@@ -780,6 +966,7 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
     companion object {
         private const val PALM_WINDOW_MS = 350L
         private const val MIN_POINT_DISTANCE = 0.25f
+        private const val HOLD_MOVE_TOLERANCE = 1.5f
         private const val HL_ALPHA = 110
     }
 }
