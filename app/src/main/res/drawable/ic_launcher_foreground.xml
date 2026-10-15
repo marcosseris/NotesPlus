@@ -1,0 +1,24 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Note sheet -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M32,24 h36 l10,10 v50 a4,4 0 0 1 -4,4 h-42 a4,4 0 0 1 -4,-4 v-56 a4,4 0 0 1 4,-4 z" />
+    <path
+        android:fillColor="#FFD6E4F0"
+        android:pathData="M68,24 v10 h10 z" />
+    <!-- Ruled lines -->
+    <path
+        android:strokeColor="#FFB7C9DC"
+        android:strokeWidth="2"
+        android:pathData="M36,46 h32 M36,54 h32 M36,62 h32 M36,70 h20" />
+    <!-- Pen stroke -->
+    <path
+        android:strokeColor="#FFE8542F"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:pathData="M30,78 C 42,60 50,64 56,56 S 70,44 80,36" />
+</vector>

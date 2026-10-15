@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">NotesPlus</string>
+    <string name="sync_channel_name">OneDrive sync</string>
+    <string name="sync_channel_desc">Shows progress while notes sync with OneDrive</string>
+</resources>

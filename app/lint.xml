@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lint>
+    <!-- Adaptive icons must live in a -v26 folder for AAPT even though minSdk is 26. -->
+    <issue id="ObsoleteSdkInt" severity="ignore" />
+    <!-- Dependency-freshness nags are not build problems. -->
+    <issue id="GradleDependency" severity="informational" />
+    <issue id="AndroidGradlePluginVersion" severity="informational" />
+</lint>
