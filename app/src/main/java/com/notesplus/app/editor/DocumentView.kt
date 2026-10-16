@@ -212,10 +212,6 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
         doc.pages.forEach { p -> p.strokes.forEach { ids += it.id } }
         pathCache.keys.retainAll(ids)
         ink = doc
-        (source as? BlankPageSource)?.let { b ->
-            if (doc.pageCount > b.pageCount) { b.pageCount = doc.pageCount; relayout() }
-            b.paper = doc.paper
-        }
         invalidate()
     }
 
@@ -224,16 +220,6 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
 
     fun undo() { if (!undo.canUndo) return; finishStrokeIfAny(); ink = undo.undo(ink); emitInkChanged(); invalidate() }
     fun redo() { if (!undo.canRedo) return; finishStrokeIfAny(); ink = undo.redo(ink); emitInkChanged(); invalidate() }
-
-    fun addPage(): Int {
-        val b = source as? BlankPageSource ?: return -1
-        b.pageCount += 1
-        ink = ink.withPageCount(b.pageCount)
-        relayout()
-        emitInkChanged()
-        scrollToPage(b.pageCount - 1)
-        return b.pageCount - 1
-    }
 
     val pageCount: Int get() = source?.pageCount ?: 0
 
@@ -463,13 +449,6 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
                     anyPatchMissing = true
                     if (preview != null) canvas.drawBitmap(preview, null, sr, bitmapPaint)
                 }
-            } else if (src is BlankPageSource) {
-                val save = canvas.save()
-                canvas.clipRect(sr)
-                canvas.translate(sr.left, sr.top)
-                canvas.scale(scale, scale)
-                BlankPageSource.drawPaper(canvas, src.pageSize(i), src.paper)
-                canvas.restoreToCount(save)
             }
 
             // Ink.

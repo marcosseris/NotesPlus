@@ -8,18 +8,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.CreateNewFolder
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -30,6 +24,7 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -50,8 +45,12 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.notesplus.app.BuildConfig
-import com.notesplus.app.onedrive.SyncStatus
-import com.notesplus.app.onedrive.auth.AuthState
+import com.notesplus.app.cloud.SyncStatus
+import com.notesplus.app.cloud.auth.AuthState
+import com.notesplus.app.data.WriteBackMode
+import com.notesplus.app.data.db.Provider
+import com.notesplus.app.update.UpdateState
+import androidx.compose.material3.LinearProgressIndicator
 import com.notesplus.app.ui.common.appViewModel
 import com.notesplus.app.ui.common.formatRelative
 
@@ -60,58 +59,57 @@ import com.notesplus.app.ui.common.formatRelative
 fun SettingsScreen(onBack: () -> Unit) {
     val vm = appViewModel { SettingsViewModel(it) }
     val ui by vm.ui.collectAsStateWithLifecycle()
-    val browser by vm.browser.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
     LaunchedEffect(Unit) { vm.messages.collect { snackbar.showSnackbar(it) } }
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Settings") },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") } }
-            )
+            TopAppBar(title = { Text("Settings") }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") } })
         },
         snackbarHost = { SnackbarHost(snackbar) }
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState())) {
-            Section("OneDrive account")
-            when (val a = ui.auth) {
-                is AuthState.SignedIn -> {
-                    ListItem(headlineContent = { Text(a.accountName) }, supportingContent = { Text("Signed in") },
-                        trailingContent = { OutlinedButton(onClick = { vm.signOut() }) { Text("Sign out") } })
-                }
-                is AuthState.SigningIn -> ListItem(headlineContent = { Text("Waiting for sign-in…") }, trailingContent = { CircularProgressIndicator(Modifier.width(24.dp).height(24.dp), strokeWidth = 2.dp) })
-                is AuthState.Error -> {
-                    ListItem(headlineContent = { Text("Sign-in failed", color = MaterialTheme.colorScheme.error) }, supportingContent = { Text(a.message) },
-                        trailingContent = { Button(onClick = { vm.signIn(context) }) { Text("Retry") } })
-                }
-                AuthState.SignedOut -> ListItem(
-                    headlineContent = { Text("Not signed in") },
-                    supportingContent = { Text("Sign in with your Microsoft account to sync notes and annotations.") },
-                    trailingContent = { Button(onClick = { vm.signIn(context) }, enabled = ui.settings.effectiveClientId.isNotBlank()) { Text("Sign in") } }
+            Section("Accounts")
+            Provider.entries.forEach { p ->
+                AccountRow(p, ui.auth[p] ?: AuthState.SignedOut, clientIdPresent = ui.settings.clientId(p).isNotBlank(),
+                    onSignIn = { vm.signIn(p, context) }, onSignOut = { vm.signOut(p) })
+                ClientIdEditor(
+                    label = "${p.label} client ID",
+                    current = if (p == Provider.ONEDRIVE) ui.settings.oneDriveClientIdOverride else ui.settings.googleClientIdOverride,
+                    builtIn = if (p == Provider.ONEDRIVE) BuildConfig.ONEDRIVE_CLIENT_ID else BuildConfig.GOOGLE_CLIENT_ID,
+                    hint = if (p == Provider.ONEDRIVE) "Azure app registration → Application (client) ID" else "Google Cloud → OAuth client (Android) → Client ID",
+                    onSave = { vm.saveClientId(p, it) }
                 )
+                if (p == Provider.ONEDRIVE) HorizontalDivider(Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
             }
-            ClientIdEditor(current = ui.settings.clientIdOverride, builtIn = BuildConfig.ONEDRIVE_CLIENT_ID, onSave = vm::saveClientId)
 
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             Section("Sync")
-            ListItem(
-                headlineContent = { Text("OneDrive folder") },
-                supportingContent = { Text(ui.settings.syncFolderPath + if (ui.settings.syncFolderId == null) "  (created on first sync)" else "") },
-                trailingContent = { TextButton(onClick = { vm.openBrowser() }, enabled = ui.auth is AuthState.SignedIn) { Text("Change") } }
-            )
-            SwitchRow("Sync automatically", "Upload edits a few seconds after you stop writing and check for changes every 15 minutes", ui.settings.autoSync, vm::setAutoSync)
+            SwitchRow("Sync automatically", "Upload annotations a few seconds after you stop writing and check for changes every 15 minutes", ui.settings.autoSync, vm::setAutoSync)
             SwitchRow("Sync on mobile data", "Turn off to sync only on Wi-Fi", ui.settings.syncOnMeteredNetworks, vm::setMetered)
-            SwitchRow("Also upload an annotated PDF", "Keeps a “<name>.annotated.pdf” next to each note so annotations are visible in any PDF viewer", ui.settings.exportAnnotatedPdfOnSync, vm::setExportOnSync)
+            Text("Show annotations on other devices", Modifier.padding(start = 16.dp, top = 12.dp, end = 16.dp), style = MaterialTheme.typography.titleSmall)
+            Text("Your pen strokes always sync as a small file NotesPlus understands. This controls whether they are also baked into a PDF that any viewer can show.",
+                Modifier.padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            WriteBackMode.entries.forEach { mode ->
+                Row(Modifier.fillMaxWidth().clickable { vm.setWriteBack(mode) }.padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(selected = ui.settings.writeBack == mode, onClick = { vm.setWriteBack(mode) })
+                    Column(Modifier.padding(start = 4.dp)) {
+                        Text(mode.label, style = MaterialTheme.typography.bodyLarge)
+                        Text(mode.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
             ListItem(
                 headlineContent = { Text("Last sync") },
                 supportingContent = {
                     val s = ui.sync
                     Text(when (s) { is SyncStatus.Running -> s.message; is SyncStatus.Failed -> "Failed: ${s.message}"; else -> "${formatRelative(ui.settings.lastSyncAt)} · ${ui.settings.lastSyncStatus.ifBlank { "—" }}" })
                 },
-                trailingContent = { TextButton(onClick = { vm.syncNow() }, enabled = ui.auth is AuthState.SignedIn && ui.sync !is SyncStatus.Running) { Text("Sync now") } }
+                trailingContent = { TextButton(onClick = { vm.syncNow() }, enabled = ui.auth.values.any { it is AuthState.SignedIn } && ui.sync !is SyncStatus.Running) { Text("Sync now") } }
             )
+            ListItem(headlineContent = { Text("Folder cache") }, supportingContent = { Text("Cached folder listings make browsing instant and work offline") },
+                trailingContent = { TextButton(onClick = { vm.clearCache() }) { Text("Clear") } })
 
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             Section("Pen & touch")
@@ -119,8 +117,39 @@ fun SettingsScreen(onBack: () -> Unit) {
             SwitchRow("Stylus button erases", "Hold the pen's side button to erase", ui.settings.stylusButtonErases, vm::setStylusButtonErases)
             SwitchRow("Snap shapes when you pause", "Hold the pen still at the end of a stroke to turn it into a straight line, rectangle, circle or triangle", ui.settings.autoShape, vm::setAutoShape)
             SwitchRow("Straight highlighter", "Roughly straight highlighter strokes become ruler-straight bars when you lift the pen", ui.settings.straightHighlighter, vm::setStraightHighlighter)
-            SwitchRow("Predict pen movement", "Draws a short predicted tail so ink keeps up with the Magic-Pencil; turn off if strokes overshoot", ui.settings.motionPrediction, vm::setMotionPrediction)
+            SwitchRow("Predict pen movement", "Draws a short predicted tail so ink keeps up with the pen; turn off if strokes overshoot", ui.settings.motionPrediction, vm::setMotionPrediction)
             SwitchRow("Tool rail on the right", "For left-handed use on tablets", ui.settings.railOnRight, vm::setRailOnRight)
+
+            HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            Section("Updates")
+            if (!vm.updatesSupported) {
+                Text("Automatic updates work in release builds installed from GitHub Releases (this is a debug build).", Modifier.padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                SwitchRow("Update automatically", "Check GitHub for new builds when the app opens and install them", ui.settings.autoUpdate, vm::setAutoUpdate)
+                val u = ui.update
+                ListItem(
+                    headlineContent = { Text("Version ${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})") },
+                    supportingContent = {
+                        when (u) {
+                            is UpdateState.Checking -> Text("Checking…")
+                            is UpdateState.UpToDate -> Text("Up to date · last checked ${formatRelative(ui.settings.lastUpdateCheck)}")
+                            is UpdateState.Available -> Text("${u.release.versionName} is available")
+                            is UpdateState.Downloading -> Column { Text("Downloading ${u.release.versionName}…"); LinearProgressIndicator(progress = { u.progress }, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) }
+                            is UpdateState.Installing -> Text("Installing…")
+                            is UpdateState.Error -> Text(u.message, color = MaterialTheme.colorScheme.error)
+                            UpdateState.Idle -> Text("Last checked ${formatRelative(ui.settings.lastUpdateCheck)}")
+                        }
+                    },
+                    trailingContent = {
+                        when (u) {
+                            is UpdateState.Available -> Button(onClick = { vm.installUpdate() }) { Text("Install") }
+                            is UpdateState.Checking, is UpdateState.Downloading, is UpdateState.Installing -> CircularProgressIndicator(Modifier.width(24.dp).height(24.dp), strokeWidth = 2.dp)
+                            else -> TextButton(onClick = { vm.checkForUpdates() }) { Text("Check now") }
+                        }
+                    }
+                )
+                GithubTokenEditor(present = ui.hasGithubToken, onSave = vm::saveGithubToken)
+            }
 
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             Section("Sync log")
@@ -132,8 +161,21 @@ fun SettingsScreen(onBack: () -> Unit) {
             Text("NotesPlus ${BuildConfig.VERSION_NAME}", Modifier.padding(16.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
+}
 
-    browser?.let { b -> FolderPickerDialog(b, vm) }
+@Composable
+private fun AccountRow(p: Provider, state: AuthState, clientIdPresent: Boolean, onSignIn: () -> Unit, onSignOut: () -> Unit) {
+    when (state) {
+        is AuthState.SignedIn -> ListItem(headlineContent = { Text(p.label) }, supportingContent = { Text(state.accountName) },
+            trailingContent = { OutlinedButton(onClick = onSignOut) { Text("Sign out") } })
+        is AuthState.SigningIn -> ListItem(headlineContent = { Text(p.label) }, supportingContent = { Text("Waiting for sign-in…") },
+            trailingContent = { CircularProgressIndicator(Modifier.width(24.dp).height(24.dp), strokeWidth = 2.dp) })
+        is AuthState.Error -> ListItem(headlineContent = { Text(p.label, color = MaterialTheme.colorScheme.error) }, supportingContent = { Text(state.message) },
+            trailingContent = { Button(onClick = onSignIn) { Text("Retry") } })
+        AuthState.SignedOut -> ListItem(headlineContent = { Text(p.label) },
+            supportingContent = { Text(if (clientIdPresent) "Not signed in" else "Add the client ID below first") },
+            trailingContent = { Button(onClick = onSignIn, enabled = clientIdPresent) { Text("Sign in") } })
+    }
 }
 
 @Composable
@@ -143,74 +185,40 @@ private fun Section(title: String) {
 
 @Composable
 private fun SwitchRow(title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    ListItem(
-        headlineContent = { Text(title) },
-        supportingContent = { Text(subtitle) },
-        trailingContent = { Switch(checked = checked, onCheckedChange = onChange) },
-        modifier = Modifier.clickable { onChange(!checked) }
-    )
+    ListItem(headlineContent = { Text(title) }, supportingContent = { Text(subtitle) },
+        trailingContent = { Switch(checked = checked, onCheckedChange = onChange) }, modifier = Modifier.clickable { onChange(!checked) })
 }
 
 @Composable
-private fun ClientIdEditor(current: String, builtIn: String, onSave: (String) -> Unit) {
-    var text by remember(current) { mutableStateOf(current) }
+private fun GithubTokenEditor(present: Boolean, onSave: (String) -> Unit) {
+    var text by remember { mutableStateOf("") }
     Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
         OutlinedTextField(
             value = text, onValueChange = { text = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
-            label = { Text("Azure app (client) ID") },
-            placeholder = { Text(if (builtIn.isNotBlank()) "Built in: ${builtIn.take(8)}…" else "e.g. 3f2a1c7e-…") },
-            supportingText = {
-                Text(
-                    if (builtIn.isBlank() && current.isBlank()) "Required once. Register a free app at portal.azure.com (see README) and paste its Application (client) ID here."
-                    else "Leave empty to use the ID compiled into the app."
-                )
-            }
+            label = { Text("GitHub token (private repository)") },
+            placeholder = { Text(if (present) "Token saved · paste a new one to replace it" else "github_pat_…") },
+            supportingText = { Text("Fine-grained token with read-only Contents access to marcosseris/NotesPlus. Stored encrypted on this device.") },
+            visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation()
         )
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            TextButton(onClick = { onSave(text) }, enabled = text.trim() != current) { Text("Save") }
+            if (present) TextButton(onClick = { onSave(""); text = "" }) { Text("Remove") }
+            TextButton(onClick = { onSave(text); text = "" }, enabled = text.isNotBlank()) { Text("Save") }
         }
     }
 }
 
 @Composable
-private fun FolderPickerDialog(b: FolderBrowser, vm: SettingsViewModel) {
-    var newFolder by remember { mutableStateOf<String?>(null) }
-    AlertDialog(
-        onDismissRequest = { vm.closeBrowser() },
-        title = { Text("Choose OneDrive folder") },
-        text = {
-            Column {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = { vm.up() }, enabled = b.path.isNotEmpty()) { Text("↑ Up") }
-                    Text(b.currentPath, style = MaterialTheme.typography.bodySmall, maxLines = 1)
-                }
-                when {
-                    b.loading -> CircularProgressIndicator(Modifier.padding(16.dp))
-                    b.error != null -> Text(b.error, color = MaterialTheme.colorScheme.error)
-                    else -> LazyColumn(Modifier.heightIn(max = 320.dp)) {
-                        if (b.folders.isEmpty()) item { Text("No subfolders", Modifier.padding(8.dp), style = MaterialTheme.typography.bodySmall) }
-                        items(b.folders, key = { it.id }) { f ->
-                            ListItem(
-                                headlineContent = { Text(f.name) },
-                                leadingContent = { Icon(Icons.Default.Folder, contentDescription = null) },
-                                modifier = Modifier.clickable { vm.enter(f) }
-                            )
-                        }
-                    }
-                }
-                TextButton(onClick = { newFolder = "" }) { Icon(Icons.Default.CreateNewFolder, null); Spacer(Modifier.width(6.dp)); Text("New folder") }
-            }
-        },
-        confirmButton = { TextButton(onClick = { vm.useCurrentFolder() }, enabled = b.path.isNotEmpty() && !b.loading) { Text("Use this folder") } },
-        dismissButton = { TextButton(onClick = { vm.closeBrowser() }) { Text("Cancel") } }
-    )
-    newFolder?.let { name ->
-        AlertDialog(
-            onDismissRequest = { newFolder = null },
-            title = { Text("New folder") },
-            text = { OutlinedTextField(value = name, onValueChange = { newFolder = it }, singleLine = true, label = { Text("Name") }) },
-            confirmButton = { TextButton(onClick = { if (name.isNotBlank()) vm.createFolder(name.trim()); newFolder = null }) { Text("Create") } },
-            dismissButton = { TextButton(onClick = { newFolder = null }) { Text("Cancel") } }
+private fun ClientIdEditor(label: String, current: String, builtIn: String, hint: String, onSave: (String) -> Unit) {
+    var text by remember(current) { mutableStateOf(current) }
+    Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+        OutlinedTextField(
+            value = text, onValueChange = { text = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+            label = { Text(label) },
+            placeholder = { Text(if (builtIn.isNotBlank()) "Built in: ${builtIn.take(8)}…" else hint) },
+            supportingText = { Text(if (builtIn.isBlank() && current.isBlank()) "Required once; see the README for the 3-minute setup." else "Leave empty to use the ID compiled into the app.") }
         )
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            TextButton(onClick = { onSave(text) }, enabled = text.trim() != current) { Text("Save") }
+        }
     }
 }

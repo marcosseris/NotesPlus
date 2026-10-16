@@ -1,4 +1,4 @@
-package com.notesplus.app.onedrive.auth
+package com.notesplus.app.cloud.auth
 
 import android.app.Activity
 import android.content.Intent
@@ -7,15 +7,17 @@ import com.notesplus.app.MainActivity
 import com.notesplus.app.NotesPlusApp
 import kotlinx.coroutines.launch
 
-/** Invisible activity that catches notesplus://auth and hands the code to [AuthManager]. */
+/** Invisible activity that catches OAuth redirects for every provider and hands them over. */
 class AuthRedirectActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val uri = intent?.data
         val app = application as NotesPlusApp
         if (uri != null) {
-            app.appScope.launch {
-                app.container.authManager.handleRedirect(uri)
+            val manager = app.container.authManagers.firstOrNull { it.owns(uri) }
+            if (manager != null) app.appScope.launch {
+                manager.handleRedirect(uri)
+                app.container.cloudRepository.invalidateCache(manager.provider)
                 app.container.syncScheduler.requestSync(delayMs = 0L, force = true)
             }
         }

@@ -7,6 +7,9 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Self-update from GitHub Releases -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
 
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
@@ -44,25 +47,11 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- Open PDFs shared/opened from other apps. -->
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="content" />
-                <data android:scheme="file" />
-                <data android:mimeType="application/pdf" />
-            </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.SEND" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="application/pdf" />
-            </intent-filter>
         </activity>
 
         <!-- Receives the OAuth redirect (notesplus://auth) from the Custom Tab. -->
         <activity
-            android:name=".onedrive.auth.AuthRedirectActivity"
+            android:name=".cloud.auth.AuthRedirectActivity"
             android:exported="true"
             android:launchMode="singleTask"
             android:excludeFromRecents="true"
@@ -73,7 +62,18 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="notesplus" android:host="auth" />
             </intent-filter>
+            <!-- Google OAuth redirect: com.notesplus.app:/oauth2redirect -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="com.notesplus.app" />
+            </intent-filter>
         </activity>
+
+        <receiver
+            android:name=".update.InstallResultReceiver"
+            android:exported="false" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

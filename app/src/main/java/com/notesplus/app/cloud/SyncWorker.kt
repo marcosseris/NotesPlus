@@ -1,4 +1,4 @@
-package com.notesplus.app.onedrive
+package com.notesplus.app.cloud
 
 import android.content.Context
 import androidx.work.BackoffPolicy
@@ -19,9 +19,10 @@ import java.util.concurrent.TimeUnit
 class SyncWorker(appContext: Context, params: WorkerParameters) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result {
         val app = applicationContext as NotesPlusApp
-        val engine = app.container.syncEngine
-        if (!app.container.authManager.isSignedIn) return Result.success()
-        val result = engine.sync()
+        val c = app.container
+        if (c.cloudRepository.signedInProviders().isEmpty()) return Result.success()
+        val result = c.syncEngine.sync()
+        if (result.writeBackLater) c.syncScheduler.requestSync(delayMs = 60_000L)
         return when {
             result.ok -> Result.success()
             runAttemptCount < 3 -> Result.retry()
@@ -30,10 +31,7 @@ class SyncWorker(appContext: Context, params: WorkerParameters) : CoroutineWorke
     }
 }
 
-/**
- * Decides *when* to sync. Edits trigger a debounced one-off sync; a periodic job
- * picks up remote changes while the app is in the background.
- */
+/** Decides *when* to sync: debounced after edits, periodically in the background. */
 class SyncScheduler(private val context: Context, private val prefs: Prefs) {
     private val wm get() = WorkManager.getInstance(context)
 
@@ -44,10 +42,7 @@ class SyncScheduler(private val context: Context, private val prefs: Prefs) {
             .build()
     }
 
-    /**
-     * Debounced: a new request replaces the pending one, so rapid edits coalesce.
-     * Honours the "sync automatically" setting unless [force] is set (explicit user action).
-     */
+    /** A new request replaces the pending one, so rapid edits coalesce. [force] ignores the auto-sync switch. */
     suspend fun requestSync(delayMs: Long = 8_000L, force: Boolean = false) {
         if (!force && !prefs.settings.first().autoSync) return
         val req = OneTimeWorkRequestBuilder<SyncWorker>()

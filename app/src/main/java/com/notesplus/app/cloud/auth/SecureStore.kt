@@ -1,4 +1,4 @@
-package com.notesplus.app.onedrive.auth
+package com.notesplus.app.cloud.auth
 
 import android.content.Context
 import android.security.keystore.KeyGenParameterSpec

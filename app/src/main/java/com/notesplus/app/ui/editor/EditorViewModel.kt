@@ -4,18 +4,15 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.notesplus.app.NotesPlusApp
 import com.notesplus.app.data.db.NoteEntity
-import com.notesplus.app.data.db.NoteKind
-import com.notesplus.app.editor.BlankPageSource
 import com.notesplus.app.editor.DocumentView
 import com.notesplus.app.editor.PageSource
 import com.notesplus.app.editor.PdfPageSource
 import com.notesplus.app.ink.InkDocument
-import com.notesplus.app.ink.PageSize
 import com.notesplus.app.ink.ShapeKind
 import android.graphics.Bitmap
 import android.graphics.Matrix
 import android.util.LruCache
-import com.notesplus.app.onedrive.SyncStatus
+import com.notesplus.app.cloud.SyncStatus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -111,10 +108,9 @@ class EditorViewModel(private val app: NotesPlusApp, private val noteId: String)
         try {
             val note = repo.get(noteId) ?: run { _state.update { it.copy(loading = false, error = "Note not found") }; return }
             val ink = repo.loadInk(noteId)
-            val source: PageSource = withContext(Dispatchers.IO) {
-                if (note.kind == NoteKind.PDF) PdfPageSource(repo.pdfFile(noteId)).also { it.preloadSizes() }
-                else BlankPageSource(ink.pageSize ?: PageSize.A4, ink.paper, maxOf(1, ink.pageCount))
-            }
+            val source: PageSource = withContext(Dispatchers.IO) { PdfPageSource(repo.pdfFile(noteId)).also { it.preloadSizes() } }
+            c.syncEngine.markOpen(noteId)
+            repo.touchOpened(noteId)
             pageSource = source
             initialInk = ink
             latest = ink
@@ -128,7 +124,7 @@ class EditorViewModel(private val app: NotesPlusApp, private val noteId: String)
 
     fun onInkChanged(doc: InkDocument, canUndo: Boolean, canRedo: Boolean) {
         latest = doc
-        _state.update { it.copy(canUndo = canUndo, canRedo = canRedo, unsaved = true, strokeCount = doc.strokeCount(), pageCount = if (doc.isStandalone) doc.pageCount else it.pageCount) }
+        _state.update { it.copy(canUndo = canUndo, canRedo = canRedo, unsaved = true, strokeCount = doc.strokeCount()) }
         saveJob?.cancel()
         saveJob = viewModelScope.launch {
             delay(SAVE_DEBOUNCE_MS)
@@ -204,7 +200,6 @@ class EditorViewModel(private val app: NotesPlusApp, private val noteId: String)
 
     fun togglePages() = _state.update { it.copy(showPages = !it.showPages) }
 
-    fun rename(title: String) = viewModelScope.launch { if (title.isNotBlank()) repo.rename(noteId, title) }
 
     // ---------------------------------------------------------------- page navigator thumbnails
 
@@ -239,13 +234,26 @@ class EditorViewModel(private val app: NotesPlusApp, private val noteId: String)
 
     fun syncNow() = viewModelScope.launch {
         flush()
-        if (!c.authManager.isSignedIn) { _events.emit(EditorEvent.Message("Sign in to OneDrive in Settings to sync")); return@launch }
-        val r = c.syncEngine.sync()
+        if (c.cloudRepository.signedInProviders().isEmpty()) { _events.emit(EditorEvent.Message("Sign in to a drive in Settings to sync")); return@launch }
+        val r = c.syncEngine.sync(force = true)
         _events.emit(EditorEvent.Message(if (r.ok) "Synced: ${r.message}" else "Sync failed: ${r.message}"))
+    }
+
+    /** Removes every annotation on this PDF (undo is not available afterwards; the deletion syncs). */
+    fun clearAllAnnotations() = viewModelScope.launch {
+        flush()
+        val cleared = repo.clearInk(noteId)
+        latest = cleared
+        _state.update { it.copy(strokeCount = 0, canUndo = false, canRedo = false) }
+        _events.emit(EditorEvent.ExternalInk(cleared))
+        _events.emit(EditorEvent.Message("All annotations removed"))
     }
 
     override fun onCleared() {
         flushNow()
+        c.syncEngine.markClosed(noteId)
+        // Leaving the note: let the engine bake the annotated PDF soon rather than after the idle delay.
+        app.appScope.launch { c.syncScheduler.requestSync(delayMs = 5_000L) }
         val src = pageSource
         pageSource = null
         // Give the view a moment to detach before the renderer loses its file.

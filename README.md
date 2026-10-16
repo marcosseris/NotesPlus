@@ -1,55 +1,30 @@
 # NotesPlus
 
-An Android note-taking app for annotating lecture notes with a stylus, with two-way
-OneDrive sync that never loses an annotation.
+Annotate your lecture PDFs with a stylus, straight from **OneDrive or Google Drive**.
+Browse your drive, tap a PDF, write on it; the annotations sync back automatically and
+show up on your computer too.
 
-* **Stylus-first inking** – pressure-sensitive pen, highlighter (multiply blend), stroke
-  eraser, undo/redo, palm rejection, side-button-to-erase, finger pan/pinch-zoom,
-  double-tap zoom, mouse-wheel scrolling on Chromebooks, platform motion prediction so the
-  ink keeps up with the pen tip.
-* **Colours** – 16 pen inks and 10 highlighter colours on tap, plus a full colour picker
-  (palette, HSV wheel, hex entry) with your recent colours. Highlighter strokes that are
-  roughly straight become ruler-straight bars on lift (switchable).
-* **Shapes** – a shape tool (line, arrow, rectangle, ellipse, triangle; hold the pen button or
-  Shift for squares/circles/45° lines) and *hold-to-snap*: pause the pen at the end of a rough
-  stroke and it turns into a clean line, polyline, rectangle, triangle or ellipse. Both can be
-  turned off in Settings.
-* **Modern look** – Material You dynamic colour (with an indigo/coral fallback), soft 18–32 dp
-  corners, splash screen, floating pill tool rail and page pill over the canvas, animated
-  panels, collapsing library header and card badges.
-* **Tablet UI** – on screens 600 dp and wider (both orientations of the Honor Pad 9) tools sit
-  on a vertical rail next to the page, with colours, three width presets, undo/redo and a page
-  thumbnail navigator; the rail can be moved to the right for left-handed use. Phones get a
-  bottom bar instead. Library has a folder pane, filters and sorting.
-* **PDF lecture notes** – open any PDF (import from the device, "Open with" from another
-  app, or simply drop it in your OneDrive folder). Pages render crisply at any zoom.
-* **Blank notebooks** – ruled / grid / dotted / plain paper, add pages as you go.
-* **Automatic OneDrive sync** – pick a folder on OneDrive; every PDF in it appears in the
-  app, your annotations are uploaded a few seconds after you stop writing, and changes made
-  elsewhere are pulled in (on app start, every 15 minutes in the background, and on demand).
-* **Annotations are never lost** – ink is stored as a small `*.ink.json` sidecar next to each
-  PDF. Strokes are immutable and identified by id, erasures are tombstones, so two devices
-  editing the same note offline merge cleanly instead of overwriting each other.
-* **Export** – "Export annotated PDF" writes your ink into a copy of the PDF as real vector
-  content (sharp, small, opens anywhere). Optionally uploaded automatically on every sync.
-
-## Honor Pad 9 notes
-
-The app was tuned for this tablet (12.1" 2560×1600, 120 Hz, Magic-Pencil):
-
-* The activity requests the display's highest refresh-rate mode, so inking runs at 120 Hz
-  instead of the 60 Hz some vendors default third-party apps to.
-* Pages open at *fit page* in landscape (whole page visible, centred) and zoom from there;
-  crisp viewport patches are rendered at the exact on-screen scale, so 2560 px wide pages stay
-  sharp without holding full-page bitmaps at that size in memory.
-* Stylus input is dispatched unbuffered, all historical samples are consumed and a predicted
-  tail is drawn using `androidx.input:input-motionprediction`.
-* Palm rejection ignores finger touches while the pen is down or hovering; the pen's side
-  button erases; pressure from the Magic-Pencil drives pen width.
-* The screen stays on while a note is open.
-
-Keyboard shortcuts (with a Bluetooth keyboard): `P` pen, `H` highlighter, `E` eraser,
-`S` shapes, `Space` pan, `Ctrl+Z` / `Ctrl+Shift+Z` undo/redo, `Ctrl +/-/0` zoom, `PgUp/PgDn`.
+* **Drive browser** – sign in to OneDrive and/or Google Drive, browse folders (cached, so it
+  is instant and works offline), open any PDF. Google Drive shows My Drive, Shared with me
+  and Shared drives.
+* **Stylus-first inking** – pressure-sensitive pen, highlighter (multiply blend, auto-straight
+  bars), stroke eraser, undo/redo, palm rejection, side-button erase, finger pan/zoom,
+  platform motion prediction so ink keeps up with the pen tip.
+* **Colours** – 16 pen inks and 10 highlighter colours on the rail, plus a full colour picker
+  with recent colours.
+* **Shapes** – line, arrow, rectangle, ellipse, triangle tools, and *hold-to-snap*: pause the pen
+  at the end of a rough stroke and it becomes a clean shape.
+* **Annotations you can always edit** – strokes live in a small `<name>.pdf.ink.json` next to
+  the PDF. Reopen any annotated PDF later, erase individual strokes or everything, add more.
+  Two devices editing offline merge cleanly instead of overwriting each other.
+* **Visible everywhere** – after you stop editing, the PDF on your drive is rewritten with your
+  ink on a separate, marked layer. Any viewer shows it; Acrobat lets you hide the layer. The
+  original pages stay inside the file untouched, so NotesPlus can always recover the pristine
+  PDF (and you can switch to a sibling `*.annotated.pdf` or turn write-back off in Settings).
+* **Tablet UI** – floating tool rail, page navigator and keyboard shortcuts on 600 dp+ screens
+  (the Honor Pad 9 in both orientations); bottom bar on phones. 120 Hz where available.
+* **Self-updating** – every push to the default branch publishes a signed build to GitHub
+  Releases; the app installs new builds by itself.
 
 ## Building
 
@@ -57,67 +32,110 @@ Requirements: JDK 17+, Android SDK 35 (the Gradle wrapper fetches everything els
 
 ```bash
 ./gradlew :app:assembleDebug        # APK in app/build/outputs/apk/debug/
-./gradlew :app:testDebugUnitTest    # merge / geometry / undo unit tests
+./gradlew :app:testDebugUnitTest    # merge / geometry / shape / undo unit tests
 ```
 
-Install with `adb install app/build/outputs/apk/debug/app-debug.apk`.
+## Connecting drives
 
-## OneDrive setup (one-time, ~3 minutes)
+Both providers use standard OAuth with PKCE from a Custom Tab. Neither needs a secret, but
+each needs an app registration (a *client ID*) that you create once, for free.
 
-The app signs in with the Microsoft identity platform using the standard OAuth
-authorization-code + PKCE flow. There is no secret to protect, but Microsoft requires every
-app to have its own *client ID*, so you register one (free, works with personal accounts):
+### OneDrive (personal or university account)
 
-1. Go to <https://portal.azure.com> → **Microsoft Entra ID** → **App registrations** → **New registration**.
-2. Name: `NotesPlus`. Supported account types: **Personal Microsoft accounts only** (or
-   "Accounts in any organizational directory and personal Microsoft accounts" if you also
-   want a university account).
-3. Redirect URI: choose platform **Mobile and desktop applications** and enter
-   `notesplus://auth`
-4. Register, then copy the **Application (client) ID**.
-5. Under **Authentication** make sure *Allow public client flows* is **Yes**.
-6. (API permissions) `User.Read`, `Files.ReadWrite` and `offline_access` are requested at
-   sign-in as delegated permissions; the default *User.Read* is already there and the
-   others are granted when you consent on first sign-in.
+You can register the app under a **personal** Microsoft account even if you will sign in with
+a university account; the registration only has to be multi-tenant.
 
-Then either paste the client ID into **Settings → Azure app (client) ID** inside the app,
-or bake it into the build by adding to `local.properties`:
+1. Sign in to <https://portal.azure.com> with a personal Microsoft account → **App registrations** → **New registration**.
+2. Name `NotesPlus`. Supported account types: **Accounts in any organizational directory and personal Microsoft accounts**.
+3. Redirect URI: platform **Public client/native (mobile & desktop)**, value `notesplus://auth`.
+4. Register, copy the **Application (client) ID**.
+5. **Authentication** → *Allow public client flows* → **Yes** → Save.
+6. In the app: **Settings → OneDrive client ID** → paste → Save → **Sign in** with the account that holds your notes.
 
-```
-NOTESPLUS_CLIENT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-```
+If a university tenant answers "Need admin approval", ask IT to grant admin consent for your
+client ID (delegated `Files.ReadWrite` + `User.Read`), or use the request-approval form shown
+on that page.
 
-Finally **Settings → Sign in**, then **OneDrive folder → Change** to choose the folder that
-holds your lecture notes (default `/NotesPlus`, created for you).
+### Google Drive
+
+1. <https://console.cloud.google.com> → create a project (any name).
+2. **APIs & Services → Library** → enable **Google Drive API**.
+3. **OAuth consent screen** → External → fill in the app name and your email → add the scope
+   `https://www.googleapis.com/auth/drive` → add your Google account under **Test users**.
+4. **Credentials → Create credentials → OAuth client ID** → Application type **Android** →
+   package name `com.notesplus.app`, SHA-1 of your signing key (see below; for the debug build
+   use `keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android`).
+5. Copy the **Client ID** into **Settings → Google Drive client ID** → Save → **Sign in**.
+
+The redirect used is `com.notesplus.app:/oauth2redirect`, which Google accepts for Android
+clients without further configuration. While the consent screen is in "Testing", Google shows
+an "unverified app" warning once; continue past it.
 
 ## How sync works
 
 ```
-OneDrive/<folder>/
-  Week 1/Lecture 3.pdf            ← your original PDF, never modified
-  Week 1/Lecture 3.pdf.ink.json   ← your annotations (strokes in PDF points, per page)
-  Scratch.ink.json                ← a blank notebook created in the app
-  Lecture 3.annotated.pdf         ← optional flattened export
+OneDrive or Google Drive/…/Week 1/
+  Lecture 3.pdf            ← rewritten with your ink on a marked layer (original pages intact)
+  Lecture 3.pdf.ink.json   ← your strokes (page points, per page); the source of truth
 ```
 
-* **Pull** uses the Graph *delta* API on the folder, so only changed files are touched.
-  New PDFs are downloaded; changed sidecars are merged into the local annotations.
-* **Push** uploads dirty notes. Sidecar uploads use `If-Match` on the remote eTag; on a
-  `412 Precondition Failed` the remote copy is merged in first and the upload retried, so
-  concurrent edits from two devices are combined rather than lost.
-* Deleting a note in the app offers to delete it on OneDrive too; deleting a PDF on
-  OneDrive removes it from the device unless it has unsynced local edits.
-* Subfolders are supported and shown as part of the note's subtitle.
+* Opening a PDF downloads it, strips any NotesPlus layer so the local copy is pristine, and
+  merges a remote `.ink.json` if one exists.
+* Each stroke saves locally at once; the sidecar uploads a few seconds after you stop writing.
+  Uploads are conditional (OneDrive `If-Match`, Drive version check) and a conflict is resolved by
+  merging, never by overwriting.
+* About 45 s after you stop editing, or when you leave the note, the annotated PDF is rebuilt and
+  uploaded in place (or as `*.annotated.pdf`, or not at all; Settings → Sync).
+* Recently opened notes are re-checked on app start and every 15 minutes in the background.
+* **Remove from device** deletes only the local copy; the drive keeps everything.
+
+## Automatic updates
+
+Android requires every update to be signed with the same key, so the pipeline needs a
+signing key stored in GitHub Secrets. One-time setup:
+
+```bash
+keytool -genkeypair -v -keystore notesplus-release.jks -alias notesplus \
+  -keyalg RSA -keysize 2048 -validity 10000 -storepass CHOOSE_A_PASSWORD -keypass CHOOSE_A_PASSWORD \
+  -dname "CN=NotesPlus"
+base64 -w0 notesplus-release.jks > keystore.b64      # macOS: base64 -i notesplus-release.jks -o keystore.b64
+keytool -list -v -keystore notesplus-release.jks -alias notesplus -storepass CHOOSE_A_PASSWORD | grep SHA1
+```
+
+In the GitHub repository → **Settings → Secrets and variables → Actions**, add:
+
+| Secret | Value |
+|---|---|
+| `NOTESPLUS_KEYSTORE_BASE64` | contents of `keystore.b64` |
+| `NOTESPLUS_KEYSTORE_PASSWORD` | the password you chose |
+| `NOTESPLUS_KEY_ALIAS` | `notesplus` |
+| `NOTESPLUS_KEY_PASSWORD` | the password you chose |
+| `NOTESPLUS_CLIENT_ID` | (optional) OneDrive client ID baked into builds |
+| `NOTESPLUS_GOOGLE_CLIENT_ID` | (optional) Google client ID baked into builds |
+
+Keep `notesplus-release.jks` somewhere safe; losing it means a fresh install for the next
+version. The SHA-1 printed above is the one to register in the Google OAuth client.
+
+Every push to the default branch then runs `.github/workflows/release.yml`, which tests,
+builds a signed APK versioned `1.0.<run number>` and publishes it as a GitHub Release.
+
+On the tablet:
+
+1. Install the first release APK from the Releases page once (uninstall the debug build first).
+2. Because the repository is private, create a fine-grained personal access token with
+   read-only **Contents** permission on this repository and paste it in **Settings → Updates**.
+3. Leave **Update automatically** on. New builds are checked for when the app opens; after the
+   first self-install Android 12+ installs later ones without any prompt.
 
 ## Project layout
 
 ```
 app/src/main/java/com/notesplus/app/
-  ink/        InkModel (format + merge), InkGeometry (pressure outlines, eraser hit-tests),
-              Shapes (shape tool builder + hold-to-snap recogniser)
+  cloud/      CloudProvider (OneDrive + Google Drive), CloudRepository (folder cache), SyncEngine, auth (PKCE)
+  ink/        InkModel (format + merge), InkGeometry, Shapes (shape tool + recogniser)
   editor/     DocumentView (stylus input, zoom/scroll, drawing), PageSource, PageRenderer, UndoManager
-  data/       Room database, NoteRepository (files + per-note locking), Prefs (DataStore)
-  onedrive/   AuthManager (PKCE), GraphClient, SyncEngine, SyncWorker/SyncScheduler
-  export/     PdfExporter (vector export via PdfBox-Android)
-  ui/         Compose screens: library, editor, settings
+  export/     PdfExporter (reversible annotation layer via PdfBox-Android)
+  update/     UpdateManager (GitHub Releases self-update)
+  data/       Room database, NoteRepository, Prefs
+  ui/         Compose screens: home (browse + recent), editor, settings
 ```

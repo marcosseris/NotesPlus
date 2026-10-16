@@ -39,7 +39,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.NoteAdd
+import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.TrendingFlat
 import androidx.compose.material.icons.automirrored.filled.Undo
@@ -105,17 +105,16 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.notesplus.app.data.db.NoteKind
 import com.notesplus.app.editor.DocumentView
 import com.notesplus.app.ink.InkDocument
 import com.notesplus.app.ink.ShapeKind
-import com.notesplus.app.onedrive.SyncStatus
+import com.notesplus.app.cloud.SyncStatus
 import com.notesplus.app.ui.common.ColorPickerDialog
 import com.notesplus.app.ui.common.ColorSwatch
 import com.notesplus.app.ui.common.HIGHLIGHTER_PALETTE
 import com.notesplus.app.ui.common.PEN_PALETTE
 import com.notesplus.app.ui.common.appViewModel
-import com.notesplus.app.ui.library.shareFile
+import com.notesplus.app.ui.common.shareFile
 
 private val PEN_WIDTHS = listOf(1.2f, 2.2f, 4.0f)
 private val HL_WIDTHS = listOf(10f, 16f, 26f)
@@ -138,7 +137,7 @@ fun EditorScreen(noteId: String, onBack: () -> Unit) {
     var view by remember { mutableStateOf<DocumentView?>(null) }
     var showOptions by remember { mutableStateOf(false) }
     var showJump by remember { mutableStateOf(false) }
-    var showRename by remember { mutableStateOf(false) }
+    var showClearAll by remember { mutableStateOf(false) }
     var showColorPicker by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
 
@@ -180,11 +179,12 @@ fun EditorScreen(noteId: String, onBack: () -> Unit) {
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
                     navigationIcon = { IconButton(onClick = { vm.flushNow(); onBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") } },
                     title = {
-                        Column(Modifier.clickable { showRename = true }) {
+                        Column {
                             Text(state.note?.title ?: "", maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
                             Text(
-                                (if (state.note?.kind == NoteKind.PDF) "PDF" else "Notebook") + " · ${state.pageCount} page${if (state.pageCount == 1) "" else "s"}" +
+                                (state.note?.pathLabel ?: "") + " · ${state.pageCount} page${if (state.pageCount == 1) "" else "s"}" +
                                     if (state.zoom > 1.05f) " · ${(state.zoom * 100).toInt()}%" else "",
+                                maxLines = 1, overflow = TextOverflow.Ellipsis,
                                 style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
@@ -201,15 +201,14 @@ fun EditorScreen(noteId: String, onBack: () -> Unit) {
                         Box {
                             IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, contentDescription = "More") }
                             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                                if (state.note?.kind == NoteKind.INK) DropdownMenuItem(
-                                    text = { Text("Add page") }, leadingIcon = { Icon(Icons.AutoMirrored.Filled.NoteAdd, null) },
-                                    onClick = { menu = false; view?.addPage() }
-                                )
                                 DropdownMenuItem(text = { Text("Go to page…") }, onClick = { menu = false; showJump = true })
                                 DropdownMenuItem(text = { Text("Fit page") }, leadingIcon = { Icon(Icons.Default.FitScreen, null) }, onClick = { menu = false; view?.fitPage() })
                                 DropdownMenuItem(text = { Text("Fit width") }, onClick = { menu = false; view?.fitWidth() })
-                                DropdownMenuItem(text = { Text("Rename…") }, onClick = { menu = false; showRename = true })
-                                DropdownMenuItem(text = { Text("Export annotated PDF") }, onClick = { menu = false; vm.export() })
+                                DropdownMenuItem(text = { Text("Share annotated PDF") }, onClick = { menu = false; vm.export() })
+                                DropdownMenuItem(
+                                    text = { Text("Remove all annotations…") }, leadingIcon = { Icon(Icons.Default.DeleteSweep, null) },
+                                    enabled = state.strokeCount > 0, onClick = { menu = false; showClearAll = true }
+                                )
                                 HorizontalDivider()
                                 DropdownMenuItem(
                                     text = { Text(if (state.autoShape) "Shape snapping: on" else "Shape snapping: off") },
@@ -311,14 +310,13 @@ fun EditorScreen(noteId: String, onBack: () -> Unit) {
             dismissButton = { TextButton(onClick = { showJump = false }) { Text("Cancel") } }
         )
     }
-    if (showRename) {
-        var text by remember { mutableStateOf(state.note?.title ?: "") }
+    if (showClearAll) {
         AlertDialog(
-            onDismissRequest = { showRename = false },
-            title = { Text("Rename note") },
-            text = { OutlinedTextField(value = text, onValueChange = { text = it }, singleLine = true, label = { Text("Title") }) },
-            confirmButton = { TextButton(onClick = { vm.rename(text); showRename = false }) { Text("Rename") } },
-            dismissButton = { TextButton(onClick = { showRename = false }) { Text("Cancel") } }
+            onDismissRequest = { showClearAll = false },
+            title = { Text("Remove all annotations?") },
+            text = { Text("Every stroke on “${state.note?.title}” will be erased, here and on your drive. This cannot be undone.") },
+            confirmButton = { TextButton(onClick = { vm.clearAllAnnotations(); showClearAll = false }) { Text("Remove") } },
+            dismissButton = { TextButton(onClick = { showClearAll = false }) { Text("Cancel") } }
         )
     }
 }
@@ -330,7 +328,7 @@ private fun SyncIndicator(state: EditorState, onClick: () -> Unit) {
     IconButton(onClick = onClick) {
         when {
             state.sync is SyncStatus.Running -> CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-            state.unsaved || state.note?.needsUpload == true -> Icon(Icons.Default.CloudUpload, contentDescription = "Changes pending upload", tint = MaterialTheme.colorScheme.tertiary)
+            state.unsaved || state.note?.let { it.inkDirty || it.writeBackPending } == true -> Icon(Icons.Default.CloudUpload, contentDescription = "Changes pending upload", tint = MaterialTheme.colorScheme.tertiary)
             state.note?.inkRemoteId != null -> Icon(Icons.Default.CloudDone, contentDescription = "Synced", tint = MaterialTheme.colorScheme.primary)
             else -> Icon(Icons.Default.Sync, contentDescription = "Sync")
         }

@@ -7,6 +7,8 @@ on:
 
 jobs:
   build:
+    # The default branch is built and published by release.yml instead.
+    if: github.ref_name != github.event.repository.default_branch
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

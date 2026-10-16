@@ -10,8 +10,6 @@ import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
 import com.notesplus.app.data.NoteRepository
 import com.notesplus.app.data.db.NoteEntity
-import com.notesplus.app.data.db.NoteKind
-import com.notesplus.app.editor.BlankPageSource
 import com.notesplus.app.ink.InkGeometry
 import com.notesplus.app.ink.PageSize
 import com.notesplus.app.ink.ToolType
@@ -38,29 +36,19 @@ class ThumbnailLoader(private val repo: NoteRepository) {
         val ink = repo.loadInk(note.id)
         val size: PageSize
         val bmp: Bitmap
-        if (note.kind == NoteKind.PDF) {
-            val f: File = repo.pdfFile(note.id)
-            if (!f.exists()) return null
-            ParcelFileDescriptor.open(f, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
-                PdfRenderer(pfd).use { r ->
-                    if (r.pageCount == 0) return null
-                    r.openPage(0).use { p ->
-                        size = PageSize(p.width.toFloat(), p.height.toFloat())
-                        val scale = widthPx / size.w
-                        bmp = Bitmap.createBitmap(widthPx, (size.h * scale).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
-                        bmp.eraseColor(Color.WHITE)
-                        p.render(bmp, null, Matrix().apply { setScale(scale, scale) }, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                    }
+        val f: File = repo.pdfFile(note.id)
+        if (!f.exists()) return null
+        ParcelFileDescriptor.open(f, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
+            PdfRenderer(pfd).use { r ->
+                if (r.pageCount == 0) return null
+                r.openPage(0).use { p ->
+                    size = PageSize(p.width.toFloat(), p.height.toFloat())
+                    val scale = widthPx / size.w
+                    bmp = Bitmap.createBitmap(widthPx, (size.h * scale).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+                    bmp.eraseColor(Color.WHITE)
+                    p.render(bmp, null, Matrix().apply { setScale(scale, scale) }, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
                 }
             }
-        } else {
-            size = ink.pageSize ?: PageSize.A4
-            val scale = widthPx / size.w
-            bmp = Bitmap.createBitmap(widthPx, (size.h * scale).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
-            val c = Canvas(bmp)
-            c.drawColor(Color.WHITE)
-            c.scale(scale, scale)
-            BlankPageSource.drawPaper(c, size, ink.paper)
         }
         // Overlay first-page strokes.
         val strokes = ink.page(0)?.strokes ?: return bmp
