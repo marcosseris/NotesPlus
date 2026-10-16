@@ -54,6 +54,8 @@ data class EditorState(
     val autoShape: Boolean = true,
     val railOnRight: Boolean = false,
     val motionPrediction: Boolean = true,
+    val straightHighlighter: Boolean = true,
+    val recentColors: List<Int> = emptyList(),
     val showPages: Boolean = false
 )
 
@@ -98,6 +100,7 @@ class EditorViewModel(private val app: NotesPlusApp, private val noteId: String)
                     penColor = s.penColor, penWidth = s.penWidth, highlighterColor = s.highlighterColor, highlighterWidth = s.highlighterWidth,
                     eraserRadius = s.eraserRadius, fingerDraws = s.fingerDrawing, stylusButtonErases = s.stylusButtonErases,
                     autoShape = s.autoShape, railOnRight = s.railOnRight, motionPrediction = s.motionPrediction,
+                    straightHighlighter = s.straightHighlighter, recentColors = s.recentColors,
                     shapeKind = ShapeKind.entries.getOrElse(s.lastShape) { ShapeKind.LINE }
                 )
             }
@@ -162,6 +165,12 @@ class EditorViewModel(private val app: NotesPlusApp, private val noteId: String)
     // ---------------------------------------------------------------- tools
 
     fun setTool(t: DocumentView.Tool) = _state.update { it.copy(tool = t) }
+
+    /** Remembers a colour chosen in the picker so it shows under "Recent". */
+    fun rememberColor(color: Int) {
+        _state.update { it.copy(recentColors = (listOf(color) + it.recentColors.filter { c -> c != color }).take(12)) }
+        viewModelScope.launch { c.prefs.pushRecentColor(color) }
+    }
 
     fun setPen(color: Int = _state.value.penColor, width: Float = _state.value.penWidth) {
         _state.update { it.copy(penColor = color, penWidth = width) }

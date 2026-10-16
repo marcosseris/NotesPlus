@@ -7,10 +7,16 @@ OneDrive sync that never loses an annotation.
   eraser, undo/redo, palm rejection, side-button-to-erase, finger pan/pinch-zoom,
   double-tap zoom, mouse-wheel scrolling on Chromebooks, platform motion prediction so the
   ink keeps up with the pen tip.
+* **Colours** – 16 pen inks and 10 highlighter colours on tap, plus a full colour picker
+  (palette, HSV wheel, hex entry) with your recent colours. Highlighter strokes that are
+  roughly straight become ruler-straight bars on lift (switchable).
 * **Shapes** – a shape tool (line, arrow, rectangle, ellipse, triangle; hold the pen button or
   Shift for squares/circles/45° lines) and *hold-to-snap*: pause the pen at the end of a rough
   stroke and it turns into a clean line, polyline, rectangle, triangle or ellipse. Both can be
   turned off in Settings.
+* **Modern look** – Material You dynamic colour (with an indigo/coral fallback), soft 18–32 dp
+  corners, splash screen, floating pill tool rail and page pill over the canvas, animated
+  panels, collapsing library header and card badges.
 * **Tablet UI** – on screens 600 dp and wider (both orientations of the Honor Pad 9) tools sit
   on a vertical rail next to the page, with colours, three width presets, undo/redo and a page
   thumbnail navigator; the rail can be moved to the right for left-handed use. Phones get a

@@ -2,6 +2,14 @@ package com.notesplus.app.ui.editor
 
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -9,8 +17,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -31,12 +41,16 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.NoteAdd
 import androidx.compose.material.icons.automirrored.filled.Redo
-import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.automirrored.filled.TrendingFlat
+import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.automirrored.filled.ViewSidebar
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoFixNormal
 import androidx.compose.material.icons.filled.BorderColor
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.ChangeHistory
+import androidx.compose.material.icons.filled.ChevronLeft
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.CropSquare
@@ -48,13 +62,11 @@ import androidx.compose.material.icons.filled.PanTool
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.TouchApp
-import androidx.compose.material.icons.automirrored.filled.ViewSidebar
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledIconToggleButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -68,6 +80,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -81,7 +94,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -95,18 +110,21 @@ import com.notesplus.app.editor.DocumentView
 import com.notesplus.app.ink.InkDocument
 import com.notesplus.app.ink.ShapeKind
 import com.notesplus.app.onedrive.SyncStatus
+import com.notesplus.app.ui.common.ColorPickerDialog
+import com.notesplus.app.ui.common.ColorSwatch
+import com.notesplus.app.ui.common.HIGHLIGHTER_PALETTE
+import com.notesplus.app.ui.common.PEN_PALETTE
 import com.notesplus.app.ui.common.appViewModel
 import com.notesplus.app.ui.library.shareFile
 
-private val PEN_COLORS = listOf(
-    0xFF1C1C1E, 0xFF1F4E79, 0xFFD32F2F, 0xFF2E7D32, 0xFF6A1B9A, 0xFFEF6C00, 0xFF00838F, 0xFF5D4037
-).map { it.toInt() }
-private val HL_COLORS = listOf(0xFFFFE627, 0xFF7CFF5F, 0xFF4FD0FF, 0xFFFF7EB6, 0xFFFFA726, 0xFFB388FF).map { it.toInt() }
 private val PEN_WIDTHS = listOf(1.2f, 2.2f, 4.0f)
 private val HL_WIDTHS = listOf(10f, 16f, 26f)
 
-/** Width from which the tablet layout (tool rail + page navigator) is used. The Honor Pad 9 qualifies in both orientations. */
+/** Width from which the tablet layout (floating rail + page navigator) is used. */
 private val WIDE_LAYOUT_MIN_WIDTH = 600.dp
+
+/** How many palette colours sit directly on the rail / bar; the rest live behind "+". */
+private const val QUICK_COLORS = 7
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -116,10 +134,12 @@ fun EditorScreen(noteId: String, onBack: () -> Unit) {
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val haptics = LocalHapticFeedback.current
     var view by remember { mutableStateOf<DocumentView?>(null) }
     var showOptions by remember { mutableStateOf(false) }
     var showJump by remember { mutableStateOf(false) }
     var showRename by remember { mutableStateOf(false) }
+    var showColorPicker by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -131,7 +151,6 @@ fun EditorScreen(noteId: String, onBack: () -> Unit) {
             }
         }
     }
-    // Save when the app goes to the background and when leaving the screen; keep the screen awake while writing.
     DisposableEffect(lifecycleOwner) {
         val obs = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_PAUSE) vm.flushNow() }
         lifecycleOwner.lifecycle.addObserver(obs)
@@ -144,25 +163,28 @@ fun EditorScreen(noteId: String, onBack: () -> Unit) {
         }
     }
 
+    val isHl = state.tool == DocumentView.Tool.HIGHLIGHTER
     val selectTool: (DocumentView.Tool) -> Unit = { t ->
-        // Tapping the active tool again opens its size options.
+        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         showOptions = (t == state.tool && t != DocumentView.Tool.PAN && t != DocumentView.Tool.SHAPE) && !showOptions
         vm.setTool(t)
     }
-    val selectColor: (Int) -> Unit = { c -> if (state.tool == DocumentView.Tool.HIGHLIGHTER) vm.setHighlighter(color = c) else vm.setPen(color = c) }
-    val selectWidth: (Float) -> Unit = { w -> if (state.tool == DocumentView.Tool.HIGHLIGHTER) vm.setHighlighter(width = w) else vm.setPen(width = w) }
+    val selectColor: (Int) -> Unit = { c -> if (isHl) vm.setHighlighter(color = c) else vm.setPen(color = c) }
+    val selectWidth: (Float) -> Unit = { w -> if (isHl) vm.setHighlighter(width = w) else vm.setPen(width = w) }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide = maxWidth >= WIDE_LAYOUT_MIN_WIDTH
         Scaffold(
             topBar = {
                 TopAppBar(
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
                     navigationIcon = { IconButton(onClick = { vm.flushNow(); onBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") } },
                     title = {
                         Column(Modifier.clickable { showRename = true }) {
                             Text(state.note?.title ?: "", maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
                             Text(
-                                "Page ${state.currentPage + 1} of ${state.pageCount}" + if (state.zoom > 1.05f) " · ${(state.zoom * 100).toInt()}%" else "",
+                                (if (state.note?.kind == NoteKind.PDF) "PDF" else "Notebook") + " · ${state.pageCount} page${if (state.pageCount == 1) "" else "s"}" +
+                                    if (state.zoom > 1.05f) " · ${(state.zoom * 100).toInt()}%" else "",
                                 style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
@@ -172,8 +194,8 @@ fun EditorScreen(noteId: String, onBack: () -> Unit) {
                             IconButton(onClick = { view?.undo() }, enabled = state.canUndo) { Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Undo") }
                             IconButton(onClick = { view?.redo() }, enabled = state.canRedo) { Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = "Redo") }
                         }
-                        FilledIconToggleButton(checked = state.showPages, onCheckedChange = { vm.togglePages() }) {
-                            Icon(Icons.AutoMirrored.Filled.ViewSidebar, contentDescription = "Pages")
+                        IconButton(onClick = { vm.togglePages() }) {
+                            Icon(Icons.AutoMirrored.Filled.ViewSidebar, contentDescription = "Pages", tint = if (state.showPages) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
                         }
                         SyncIndicator(state, onClick = { vm.syncNow() })
                         Box {
@@ -207,54 +229,73 @@ fun EditorScreen(noteId: String, onBack: () -> Unit) {
             snackbarHost = { SnackbarHost(snackbar) },
             bottomBar = {
                 if (!wide) Column {
-                    if (state.showPages && !state.loading) PagesStrip(vm, state, onPage = { view?.scrollToPage(it) })
-                    BottomToolBar(state, selectTool, selectColor, onShape = vm::setShapeKind)
+                    AnimatedVisibility(state.showPages && !state.loading, enter = slideInVertically { it } + fadeIn(), exit = slideOutVertically { it } + fadeOut()) {
+                        PagesStrip(vm, state, onPage = { view?.scrollToPage(it) })
+                    }
+                    BottomToolBar(state, selectTool, selectColor, onShape = vm::setShapeKind, onMoreColors = { showColorPicker = true })
                 }
             }
         ) { padding ->
-            Row(Modifier.padding(padding).fillMaxSize()) {
-                if (wide && !state.railOnRight) ToolRail(state, view, selectTool, selectColor, selectWidth, onShape = vm::setShapeKind)
-                Box(Modifier.weight(1f).fillMaxHeight()) {
-                    when {
-                        state.loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
-                        state.error != null -> Text(state.error!!, Modifier.align(Alignment.Center).padding(24.dp))
-                        else -> {
-                            AndroidView(
-                                factory = { ctx ->
-                                    DocumentView(ctx).also { v ->
-                                        v.listener = object : DocumentView.Listener {
-                                            override fun onInkChanged(doc: InkDocument, canUndo: Boolean, canRedo: Boolean) = vm.onInkChanged(doc, canUndo, canRedo)
-                                            override fun onViewportChanged(currentPage: Int, pageCount: Int, zoom: Float) = vm.onViewportChanged(currentPage, pageCount, zoom)
-                                            override fun onToolShortcut(tool: DocumentView.Tool) = vm.setTool(tool)
-                                        }
-                                        vm.pageSource?.let { src -> v.post { v.setDocument(src, vm.initialInk) } }
-                                        view = v
+            Box(Modifier.padding(padding).fillMaxSize()) {
+                when {
+                    state.loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
+                    state.error != null -> Text(state.error!!, Modifier.align(Alignment.Center).padding(24.dp))
+                    else -> {
+                        AndroidView(
+                            factory = { ctx ->
+                                DocumentView(ctx).also { v ->
+                                    v.listener = object : DocumentView.Listener {
+                                        override fun onInkChanged(doc: InkDocument, canUndo: Boolean, canRedo: Boolean) = vm.onInkChanged(doc, canUndo, canRedo)
+                                        override fun onViewportChanged(currentPage: Int, pageCount: Int, zoom: Float) = vm.onViewportChanged(currentPage, pageCount, zoom)
+                                        override fun onToolShortcut(tool: DocumentView.Tool) = vm.setTool(tool)
                                     }
-                                },
-                                update = { v ->
-                                    v.tool = state.tool
-                                    v.penColor = state.penColor; v.penWidth = state.penWidth
-                                    v.highlighterColor = state.highlighterColor; v.highlighterWidth = state.highlighterWidth
-                                    v.eraserRadius = state.eraserRadius
-                                    v.fingerDraws = state.fingerDraws
-                                    v.stylusButtonErases = state.stylusButtonErases
-                                    v.shapeKind = state.shapeKind
-                                    v.autoShape = state.autoShape
-                                    v.motionPrediction = state.motionPrediction
-                                },
-                                modifier = Modifier.fillMaxSize()
-                            )
-                            DisposableEffect(Unit) { onDispose { view?.release(); view = null } }
+                                    vm.pageSource?.let { src -> v.post { v.setDocument(src, vm.initialInk) } }
+                                    view = v
+                                }
+                            },
+                            update = { v ->
+                                v.tool = state.tool
+                                v.penColor = state.penColor; v.penWidth = state.penWidth
+                                v.highlighterColor = state.highlighterColor; v.highlighterWidth = state.highlighterWidth
+                                v.eraserRadius = state.eraserRadius
+                                v.fingerDraws = state.fingerDraws
+                                v.stylusButtonErases = state.stylusButtonErases
+                                v.shapeKind = state.shapeKind
+                                v.autoShape = state.autoShape
+                                v.motionPrediction = state.motionPrediction
+                                v.straightHighlighter = state.straightHighlighter
+                            },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                        DisposableEffect(Unit) { onDispose { view?.release(); view = null } }
+
+                        if (wide) {
+                            val railAlign = if (state.railOnRight) Alignment.CenterEnd else Alignment.CenterStart
+                            val panelAlign = if (state.railOnRight) Alignment.CenterStart else Alignment.CenterEnd
+                            Box(Modifier.align(railAlign).padding(10.dp)) {
+                                FloatingToolRail(state, view, selectTool, selectColor, selectWidth, onShape = vm::setShapeKind, onMoreColors = { showColorPicker = true })
+                            }
+                            PagesPanel(vm, state, visible = state.showPages, fromRight = !state.railOnRight, onPage = { view?.scrollToPage(it) }, modifier = Modifier.align(panelAlign))
                         }
+                        PagePill(state, onPrev = { view?.scrollToPage(state.currentPage - 1) }, onNext = { view?.scrollToPage(state.currentPage + 1) }, onJump = { showJump = true },
+                            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp))
+                        OptionsPanel(state, vm, visible = showOptions, onClose = { showOptions = false }, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 64.dp))
                     }
-                    if (showOptions) ToolOptionsPanel(state, vm, onClose = { showOptions = false }, modifier = Modifier.align(Alignment.BottomCenter))
                 }
-                if (wide && state.showPages && !state.loading) PagesPanel(vm, state, onPage = { view?.scrollToPage(it) })
-                if (wide && state.railOnRight) ToolRail(state, view, selectTool, selectColor, selectWidth, onShape = vm::setShapeKind)
             }
         }
     }
 
+    if (showColorPicker) {
+        ColorPickerDialog(
+            title = if (isHl) "Highlighter colour" else "Pen colour",
+            initial = if (isHl) state.highlighterColor else state.penColor,
+            palette = if (isHl) HIGHLIGHTER_PALETTE else PEN_PALETTE,
+            recent = state.recentColors,
+            onPick = { c -> selectColor(c); vm.rememberColor(c); showColorPicker = false },
+            onDismiss = { showColorPicker = false }
+        )
+    }
     if (showJump) {
         var text by remember { mutableStateOf("${state.currentPage + 1}") }
         AlertDialog(
@@ -309,21 +350,28 @@ private fun shapeLabel(k: ShapeKind) = when (k) {
     ShapeKind.ELLIPSE -> "Ellipse"; ShapeKind.TRIANGLE -> "Triangle"
 }
 
-/** Shape tool button: tap selects the tool, tapping again (or when already active) opens the shape list. */
+/** Rounded, animated tool button used on the rail and the bottom bar. */
+@Composable
+private fun ToolButton(icon: ImageVector, label: String, selected: Boolean, onClick: () -> Unit) {
+    val bg by animateColorAsState(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent, label = "toolBg")
+    val fg by animateColorAsState(if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant, label = "toolFg")
+    Box(
+        Modifier.size(44.dp).clip(RoundedCornerShape(14.dp)).background(bg).clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) { Icon(icon, contentDescription = label, tint = fg) }
+}
+
+/** Shape tool button: tap selects the tool; tapping it while active opens the shape list. */
 @Composable
 private fun ShapeToolButton(state: EditorState, onSelect: (DocumentView.Tool) -> Unit, onShape: (ShapeKind) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
-        FilledIconToggleButton(
-            checked = state.tool == DocumentView.Tool.SHAPE,
-            onCheckedChange = { if (state.tool == DocumentView.Tool.SHAPE) open = true else onSelect(DocumentView.Tool.SHAPE) }
-        ) { Icon(shapeIcon(state.shapeKind), contentDescription = "Shapes (${shapeLabel(state.shapeKind)})") }
+        ToolButton(shapeIcon(state.shapeKind), "Shapes (${shapeLabel(state.shapeKind)})", state.tool == DocumentView.Tool.SHAPE) {
+            if (state.tool == DocumentView.Tool.SHAPE) open = true else onSelect(DocumentView.Tool.SHAPE)
+        }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             ShapeKind.entries.forEach { k ->
-                DropdownMenuItem(
-                    text = { Text(shapeLabel(k)) }, leadingIcon = { Icon(shapeIcon(k), null) },
-                    onClick = { open = false; onShape(k) }
-                )
+                DropdownMenuItem(text = { Text(shapeLabel(k)) }, leadingIcon = { Icon(shapeIcon(k), null) }, onClick = { open = false; onShape(k) })
             }
             HorizontalDivider()
             Text("Hold the pen's button (or Shift) while dragging for a square, circle or 45° line.",
@@ -333,67 +381,80 @@ private fun ShapeToolButton(state: EditorState, onSelect: (DocumentView.Tool) ->
 }
 
 @Composable
-private fun ColorDot(color: Int, selected: Boolean, size: Dp = 30.dp, onClick: () -> Unit) {
-    Box(
-        Modifier.size(size).padding(2.dp).clip(CircleShape).background(Color(color))
-            .border(if (selected) 3.dp else 1.dp, if (selected) MaterialTheme.colorScheme.primary else Color(0x33000000), CircleShape)
-            .clickable(onClick = onClick)
-    )
-}
-
-@Composable
 private fun WidthDot(width: Float, selected: Boolean, maxWidth: Float, onClick: () -> Unit) {
-    val d = (8 + 14 * (width / maxWidth)).dp
-    Box(
-        Modifier.size(34.dp).clip(CircleShape)
-            .background(if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) { Box(Modifier.size(d).clip(CircleShape).background(MaterialTheme.colorScheme.onSurface)) }
+    val d = (7 + 13 * (width / maxWidth)).dp
+    val bg by animateColorAsState(if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent, label = "widthBg")
+    Box(Modifier.size(36.dp).clip(CircleShape).background(bg).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(d).clip(CircleShape).background(MaterialTheme.colorScheme.onSurface))
+    }
 }
 
-/** Vertical rail for tablets: everything reachable with the pen without leaving the page. */
+/** "+" swatch that opens the full colour picker. */
 @Composable
-private fun ToolRail(
+private fun MoreColorsButton(onClick: () -> Unit) {
+    Box(
+        Modifier.size(30.dp).padding(2.dp).clip(CircleShape).border(1.dp, MaterialTheme.colorScheme.outline, CircleShape).clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) { Icon(Icons.Default.Add, contentDescription = "More colours", modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+}
+
+/** The colours shown inline: the first few of the palette plus the current colour if it is a custom one. */
+private fun quickColors(palette: List<Int>, current: Int): List<Int> {
+    val quick = palette.take(QUICK_COLORS)
+    return if (current in quick) quick else listOf(current) + quick.dropLast(1)
+}
+
+/** Floating pill rail for tablets: everything reachable with the pen without leaving the page. */
+@Composable
+private fun FloatingToolRail(
     state: EditorState, view: DocumentView?,
-    onTool: (DocumentView.Tool) -> Unit, onColor: (Int) -> Unit, onWidth: (Float) -> Unit, onShape: (ShapeKind) -> Unit
+    onTool: (DocumentView.Tool) -> Unit, onColor: (Int) -> Unit, onWidth: (Float) -> Unit,
+    onShape: (ShapeKind) -> Unit, onMoreColors: () -> Unit
 ) {
-    Surface(tonalElevation = 3.dp, modifier = Modifier.fillMaxHeight().width(64.dp)) {
+    Surface(shape = RoundedCornerShape(26.dp), tonalElevation = 4.dp, shadowElevation = 8.dp, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
         Column(
-            Modifier.fillMaxHeight().verticalScroll(rememberScrollState()).padding(vertical = 6.dp),
+            Modifier.width(60.dp).verticalScroll(rememberScrollState()).padding(vertical = 10.dp),
             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
             IconButton(onClick = { view?.undo() }, enabled = state.canUndo) { Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Undo") }
             IconButton(onClick = { view?.redo() }, enabled = state.canRedo) { Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = "Redo") }
-            HorizontalDivider(Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
+            RailDivider()
             ToolButton(Icons.Default.Draw, "Pen (P)", state.tool == DocumentView.Tool.PEN) { onTool(DocumentView.Tool.PEN) }
             ToolButton(Icons.Default.BorderColor, "Highlighter (H)", state.tool == DocumentView.Tool.HIGHLIGHTER) { onTool(DocumentView.Tool.HIGHLIGHTER) }
             ToolButton(Icons.Default.AutoFixNormal, "Eraser (E)", state.tool == DocumentView.Tool.ERASER) { onTool(DocumentView.Tool.ERASER) }
             ShapeToolButton(state, onTool, onShape)
             ToolButton(Icons.Default.PanTool, "Pan / zoom (Space)", state.tool == DocumentView.Tool.PAN) { onTool(DocumentView.Tool.PAN) }
             val inkTool = state.tool == DocumentView.Tool.PEN || state.tool == DocumentView.Tool.HIGHLIGHTER || state.tool == DocumentView.Tool.SHAPE
-            if (inkTool) {
-                HorizontalDivider(Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
-                val hl = state.tool == DocumentView.Tool.HIGHLIGHTER
-                val colors = if (hl) HL_COLORS else PEN_COLORS
-                val selected = if (hl) state.highlighterColor else state.penColor
-                colors.forEach { c -> ColorDot(c, c == selected) { onColor(c) } }
-                HorizontalDivider(Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
-                val widths = if (hl) HL_WIDTHS else PEN_WIDTHS
-                val cur = if (hl) state.highlighterWidth else state.penWidth
-                widths.forEach { w -> WidthDot(w, kotlin.math.abs(w - cur) < 0.05f, widths.last()) { onWidth(w) } }
+            AnimatedVisibility(inkTool) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    RailDivider()
+                    val hl = state.tool == DocumentView.Tool.HIGHLIGHTER
+                    val selected = if (hl) state.highlighterColor else state.penColor
+                    quickColors(if (hl) HIGHLIGHTER_PALETTE else PEN_PALETTE, selected).forEach { c -> ColorSwatch(c, c == selected) { onColor(c) } }
+                    MoreColorsButton(onMoreColors)
+                    RailDivider()
+                    val widths = if (hl) HL_WIDTHS else PEN_WIDTHS
+                    val cur = if (hl) state.highlighterWidth else state.penWidth
+                    widths.forEach { w -> WidthDot(w, kotlin.math.abs(w - cur) < 0.05f, widths.last()) { onWidth(w) } }
+                }
             }
-            HorizontalDivider(Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
+            RailDivider()
             IconButton(onClick = { view?.fitPage() }) { Icon(Icons.Default.FitScreen, contentDescription = "Fit page") }
         }
     }
 }
 
 @Composable
-private fun BottomToolBar(state: EditorState, onTool: (DocumentView.Tool) -> Unit, onColor: (Int) -> Unit, onShape: (ShapeKind) -> Unit) {
-    Surface(tonalElevation = 3.dp) {
+private fun RailDivider() = HorizontalDivider(Modifier.padding(horizontal = 14.dp, vertical = 5.dp), color = MaterialTheme.colorScheme.outlineVariant)
+
+@Composable
+private fun BottomToolBar(
+    state: EditorState, onTool: (DocumentView.Tool) -> Unit, onColor: (Int) -> Unit,
+    onShape: (ShapeKind) -> Unit, onMoreColors: () -> Unit
+) {
+    Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
         Row(
-            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 6.dp),
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             ToolButton(Icons.Default.Draw, "Pen", state.tool == DocumentView.Tool.PEN) { onTool(DocumentView.Tool.PEN) }
@@ -401,56 +462,72 @@ private fun BottomToolBar(state: EditorState, onTool: (DocumentView.Tool) -> Uni
             ToolButton(Icons.Default.AutoFixNormal, "Eraser", state.tool == DocumentView.Tool.ERASER) { onTool(DocumentView.Tool.ERASER) }
             ShapeToolButton(state, onTool, onShape)
             ToolButton(Icons.Default.PanTool, "Pan / zoom", state.tool == DocumentView.Tool.PAN) { onTool(DocumentView.Tool.PAN) }
-            Spacer(Modifier.width(8.dp))
             val hl = state.tool == DocumentView.Tool.HIGHLIGHTER
             if (state.tool == DocumentView.Tool.PEN || hl || state.tool == DocumentView.Tool.SHAPE) {
-                val colors = if (hl) HL_COLORS else PEN_COLORS
+                Spacer(Modifier.width(6.dp))
                 val selected = if (hl) state.highlighterColor else state.penColor
-                colors.forEach { c -> ColorDot(c, c == selected) { onColor(c) } }
+                quickColors(if (hl) HIGHLIGHTER_PALETTE else PEN_PALETTE, selected).forEach { c -> ColorSwatch(c, c == selected) { onColor(c) } }
+                MoreColorsButton(onMoreColors)
             }
         }
     }
 }
 
+/** Compact "3 / 12" pill with previous/next, floating over the bottom of the canvas. */
 @Composable
-private fun ToolOptionsPanel(state: EditorState, vm: EditorViewModel, onClose: () -> Unit, modifier: Modifier) {
-    Surface(modifier = modifier.padding(12.dp).width(360.dp), shape = MaterialTheme.shapes.large, tonalElevation = 6.dp, shadowElevation = 6.dp) {
-        Column(Modifier.padding(16.dp)) {
-            when (state.tool) {
-                DocumentView.Tool.PEN -> {
-                    Text("Pen width: ${"%.1f".format(state.penWidth)} pt", style = MaterialTheme.typography.labelLarge)
-                    Slider(value = state.penWidth, onValueChange = { vm.setPen(width = it) }, valueRange = 0.6f..8f)
-                }
-                DocumentView.Tool.HIGHLIGHTER -> {
-                    Text("Highlighter width: ${state.highlighterWidth.toInt()} pt", style = MaterialTheme.typography.labelLarge)
-                    Slider(value = state.highlighterWidth, onValueChange = { vm.setHighlighter(width = it) }, valueRange = 6f..36f)
-                }
-                else -> {
-                    Text("Eraser size: ${state.eraserRadius.toInt()} pt", style = MaterialTheme.typography.labelLarge)
-                    Slider(value = state.eraserRadius, onValueChange = { vm.setEraserRadius(it) }, valueRange = 3f..40f)
-                }
-            }
-            TextButton(onClick = onClose, modifier = Modifier.align(Alignment.End)) { Text("Done") }
+private fun PagePill(state: EditorState, onPrev: () -> Unit, onNext: () -> Unit, onJump: () -> Unit, modifier: Modifier) {
+    Surface(modifier = modifier, shape = CircleShape, tonalElevation = 4.dp, shadowElevation = 6.dp, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 4.dp)) {
+            IconButton(onClick = onPrev, enabled = state.currentPage > 0, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.ChevronLeft, contentDescription = "Previous page") }
+            Text("${state.currentPage + 1} / ${state.pageCount}", style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.clickable(onClick = onJump).padding(horizontal = 8.dp, vertical = 6.dp))
+            IconButton(onClick = onNext, enabled = state.currentPage < state.pageCount - 1, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.ChevronRight, contentDescription = "Next page") }
         }
     }
 }
 
 @Composable
-private fun ToolButton(icon: ImageVector, label: String, selected: Boolean, onClick: () -> Unit) {
-    FilledIconToggleButton(checked = selected, onCheckedChange = { onClick() }) { Icon(icon, contentDescription = label) }
+private fun OptionsPanel(state: EditorState, vm: EditorViewModel, visible: Boolean, onClose: () -> Unit, modifier: Modifier) {
+    AnimatedVisibility(visible, modifier = modifier, enter = slideInVertically { it / 2 } + fadeIn(), exit = slideOutVertically { it / 2 } + fadeOut()) {
+        Surface(modifier = Modifier.padding(12.dp).width(360.dp), shape = MaterialTheme.shapes.large, tonalElevation = 6.dp, shadowElevation = 8.dp, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+            Column(Modifier.padding(horizontal = 20.dp, vertical = 14.dp)) {
+                when (state.tool) {
+                    DocumentView.Tool.PEN -> {
+                        Text("Pen width · ${"%.1f".format(state.penWidth)} pt", style = MaterialTheme.typography.labelLarge)
+                        Slider(value = state.penWidth, onValueChange = { vm.setPen(width = it) }, valueRange = 0.6f..8f)
+                    }
+                    DocumentView.Tool.HIGHLIGHTER -> {
+                        Text("Highlighter width · ${state.highlighterWidth.toInt()} pt", style = MaterialTheme.typography.labelLarge)
+                        Slider(value = state.highlighterWidth, onValueChange = { vm.setHighlighter(width = it) }, valueRange = 6f..36f)
+                    }
+                    else -> {
+                        Text("Eraser size · ${state.eraserRadius.toInt()} pt", style = MaterialTheme.typography.labelLarge)
+                        Slider(value = state.eraserRadius, onValueChange = { vm.setEraserRadius(it) }, valueRange = 3f..40f)
+                    }
+                }
+                TextButton(onClick = onClose, modifier = Modifier.align(Alignment.End)) { Text("Done") }
+            }
+        }
+    }
 }
 
-/** Page navigator for tablets (right of the canvas). */
+/** Floating page navigator for tablets. */
 @Composable
-private fun PagesPanel(vm: EditorViewModel, state: EditorState, onPage: (Int) -> Unit) {
+private fun BoxScope.PagesPanel(vm: EditorViewModel, state: EditorState, visible: Boolean, fromRight: Boolean, onPage: (Int) -> Unit, modifier: Modifier) {
     val listState = rememberLazyListState()
-    LaunchedEffect(state.currentPage) {
-        val visible = listState.layoutInfo.visibleItemsInfo.map { it.index }
-        if (state.currentPage !in visible) listState.animateScrollToItem(state.currentPage)
+    LaunchedEffect(state.currentPage, visible) {
+        if (!visible) return@LaunchedEffect
+        val shown = listState.layoutInfo.visibleItemsInfo.map { it.index }
+        if (state.currentPage !in shown) listState.animateScrollToItem(state.currentPage)
     }
-    Surface(tonalElevation = 2.dp, modifier = Modifier.fillMaxHeight().width(148.dp)) {
-        LazyColumn(state = listState, contentPadding = androidx.compose.foundation.layout.PaddingValues(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            items(state.pageCount) { i -> PageThumb(vm, i, selected = i == state.currentPage, width = 120.dp) { onPage(i) } }
+    AnimatedVisibility(
+        visible, modifier = modifier.padding(10.dp).fillMaxHeight(),
+        enter = slideInHorizontally { if (fromRight) it else -it } + fadeIn(), exit = slideOutHorizontally { if (fromRight) it else -it } + fadeOut()
+    ) {
+        Surface(shape = RoundedCornerShape(22.dp), tonalElevation = 4.dp, shadowElevation = 8.dp, color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.width(150.dp)) {
+            LazyColumn(state = listState, contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                items(state.pageCount) { i -> PageThumb(vm, i, selected = i == state.currentPage, width = 118.dp) { onPage(i) } }
+            }
         }
     }
 }
@@ -460,11 +537,11 @@ private fun PagesPanel(vm: EditorViewModel, state: EditorState, onPage: (Int) ->
 private fun PagesStrip(vm: EditorViewModel, state: EditorState, onPage: (Int) -> Unit) {
     val listState = rememberLazyListState()
     LaunchedEffect(state.currentPage) {
-        val visible = listState.layoutInfo.visibleItemsInfo.map { it.index }
-        if (state.currentPage !in visible) listState.animateScrollToItem(state.currentPage)
+        val shown = listState.layoutInfo.visibleItemsInfo.map { it.index }
+        if (state.currentPage !in shown) listState.animateScrollToItem(state.currentPage)
     }
-    Surface(tonalElevation = 2.dp) {
-        LazyRow(state = listState, contentPadding = androidx.compose.foundation.layout.PaddingValues(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
+        LazyRow(state = listState, contentPadding = PaddingValues(10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             items(state.pageCount) { i -> PageThumb(vm, i, selected = i == state.currentPage, width = 72.dp) { onPage(i) } }
         }
     }
@@ -474,16 +551,13 @@ private fun PagesStrip(vm: EditorViewModel, state: EditorState, onPage: (Int) ->
 private fun PageThumb(vm: EditorViewModel, index: Int, selected: Boolean, width: Dp, onClick: () -> Unit) {
     var bmp by remember(index) { mutableStateOf<android.graphics.Bitmap?>(null) }
     LaunchedEffect(index) { bmp = vm.pageThumbnail(index) }
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(width).clickable(onClick = onClick)) {
-        Box(
-            Modifier.width(width).clip(RoundedCornerShape(4.dp))
-                .border(if (selected) 2.5.dp else 1.dp, if (selected) MaterialTheme.colorScheme.primary else Color(0x33000000), RoundedCornerShape(4.dp))
-                .background(Color.White)
-        ) {
+    val ring by animateColorAsState(if (selected) MaterialTheme.colorScheme.primary else Color(0x22000000), label = "thumbRing")
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(width).clip(RoundedCornerShape(10.dp)).clickable(onClick = onClick)) {
+        Box(Modifier.width(width).clip(RoundedCornerShape(8.dp)).border(if (selected) 2.5.dp else 1.dp, ring, RoundedCornerShape(8.dp)).background(Color.White)) {
             val b = bmp
             if (b != null) Image(b.asImageBitmap(), contentDescription = "Page ${index + 1}", modifier = Modifier.fillMaxWidth())
             else Box(Modifier.fillMaxWidth().height(width * 1.3f))
         }
-        Text("${index + 1}", style = MaterialTheme.typography.labelSmall, color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("${index + 1}", style = MaterialTheme.typography.labelSmall, color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 2.dp))
     }
 }

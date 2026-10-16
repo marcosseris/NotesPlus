@@ -69,6 +69,7 @@ class SettingsViewModel(private val app: NotesPlusApp) : ViewModel() {
     fun setAutoShape(v: Boolean) = viewModelScope.launch { c.prefs.setAutoShape(v) }
     fun setRailOnRight(v: Boolean) = viewModelScope.launch { c.prefs.setRailOnRight(v) }
     fun setMotionPrediction(v: Boolean) = viewModelScope.launch { c.prefs.setMotionPrediction(v) }
+    fun setStraightHighlighter(v: Boolean) = viewModelScope.launch { c.prefs.setStraightHighlighter(v) }
 
     fun syncNow() = viewModelScope.launch {
         val r = c.syncEngine.sync()

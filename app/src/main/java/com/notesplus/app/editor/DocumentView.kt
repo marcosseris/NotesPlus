@@ -81,6 +81,8 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
     var autoShapeHoldMs: Long = 550L
     /** Use the platform motion predictor to draw a short predicted tail (cuts perceived lag). */
     var motionPrediction: Boolean = true
+    /** Replace roughly straight highlighter strokes with a perfectly straight one on lift. */
+    var straightHighlighter: Boolean = true
 
     // ----------------------------------------------------------------- document
     private var source: PageSource? = null
@@ -918,9 +920,16 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
                 emitInkChanged()
             }
         } else if (curPts.size >= 3) {
+            var pts = curPts.toArray()
+            if (drawingMode == ToolType.HIGHLIGHTER && straightHighlighter && InkGeometry.length(pts) > 20f) {
+                // Text highlighting wants ruler-straight bars; keep the stroke as drawn if it was not a line.
+                (ShapeRecognizer.recognize(pts) as? ShapeRecognizer.Result.Line)?.let { l ->
+                    pts = ShapeBuilder.toStrokePoints(floatArrayOf(l.x0, l.y0, l.x1, l.y1), 0.5f)
+                }
+            }
             val stroke = Stroke(
                 id = UUID.randomUUID().toString(), tool = drawingMode, color = curColor, width = curWidth,
-                t = System.currentTimeMillis(), pts = curPts.toArray()
+                t = System.currentTimeMillis(), pts = pts
             )
             ink = ink.addStroke(page, stroke)
             undo.record(UndoManager.Op.Add(page, listOf(stroke)))

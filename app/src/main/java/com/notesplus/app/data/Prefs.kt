@@ -41,7 +41,11 @@ data class Settings(
     /** Put the tool rail on the right (left-handed users). */
     val railOnRight: Boolean = false,
     val lastShape: Int = 0,
-    val motionPrediction: Boolean = true
+    val motionPrediction: Boolean = true,
+    /** Highlighter strokes that are roughly straight are replaced by a straight line on lift. */
+    val straightHighlighter: Boolean = true,
+    /** Most recently used custom colours, newest first. */
+    val recentColors: List<Int> = emptyList()
 ) {
     val effectiveClientId: String get() = clientIdOverride.ifBlank { BuildConfig.ONEDRIVE_CLIENT_ID }
 }
@@ -70,6 +74,8 @@ class Prefs(private val context: Context) {
         val railOnRight = booleanPreferencesKey("rail_on_right")
         val lastShape = intPreferencesKey("last_shape")
         val motionPrediction = booleanPreferencesKey("motion_prediction")
+        val straightHighlighter = booleanPreferencesKey("straight_highlighter")
+        val recentColors = stringPreferencesKey("recent_colors")
     }
 
     val settings: Flow<Settings> = context.dataStore.data.map { p ->
@@ -96,7 +102,9 @@ class Prefs(private val context: Context) {
             autoShape = p[K.autoShape] ?: d.autoShape,
             railOnRight = p[K.railOnRight] ?: d.railOnRight,
             lastShape = p[K.lastShape] ?: d.lastShape,
-            motionPrediction = p[K.motionPrediction] ?: d.motionPrediction
+            motionPrediction = p[K.motionPrediction] ?: d.motionPrediction,
+            straightHighlighter = p[K.straightHighlighter] ?: d.straightHighlighter,
+            recentColors = p[K.recentColors]?.split(',')?.mapNotNull { it.toLongOrNull()?.toInt() } ?: emptyList()
         )
     }
 
@@ -124,6 +132,11 @@ class Prefs(private val context: Context) {
     suspend fun setRailOnRight(v: Boolean) = context.dataStore.edit { it[K.railOnRight] = v }
     suspend fun setLastShape(v: Int) = context.dataStore.edit { it[K.lastShape] = v }
     suspend fun setMotionPrediction(v: Boolean) = context.dataStore.edit { it[K.motionPrediction] = v }
+    suspend fun setStraightHighlighter(v: Boolean) = context.dataStore.edit { it[K.straightHighlighter] = v }
+    suspend fun pushRecentColor(color: Int) = context.dataStore.edit { p ->
+        val existing = p[K.recentColors]?.split(',')?.mapNotNull { it.toLongOrNull()?.toInt() } ?: emptyList()
+        p[K.recentColors] = (listOf(color) + existing.filter { it != color }).take(12).joinToString(",") { it.toLong().toString() }
+    }
 
     /** Called on sign-out: forget everything tied to the account but keep local notes. */
     suspend fun clearAccountState() = context.dataStore.edit {

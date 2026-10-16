@@ -118,6 +118,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             SwitchRow("Draw with finger", "When off, fingers only scroll and zoom (recommended with a stylus)", ui.settings.fingerDrawing, vm::setFingerDrawing)
             SwitchRow("Stylus button erases", "Hold the pen's side button to erase", ui.settings.stylusButtonErases, vm::setStylusButtonErases)
             SwitchRow("Snap shapes when you pause", "Hold the pen still at the end of a stroke to turn it into a straight line, rectangle, circle or triangle", ui.settings.autoShape, vm::setAutoShape)
+            SwitchRow("Straight highlighter", "Roughly straight highlighter strokes become ruler-straight bars when you lift the pen", ui.settings.straightHighlighter, vm::setStraightHighlighter)
             SwitchRow("Predict pen movement", "Draws a short predicted tail so ink keeps up with the Magic-Pencil; turn off if strokes overshoot", ui.settings.motionPrediction, vm::setMotionPrediction)
             SwitchRow("Tool rail on the right", "For left-handed use on tablets", ui.settings.railOnRight, vm::setRailOnRight)
 

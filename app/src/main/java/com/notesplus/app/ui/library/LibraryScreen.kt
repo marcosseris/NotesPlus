@@ -73,6 +73,12 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.LargeTopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -83,6 +89,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -129,10 +137,15 @@ fun LibraryScreen(
     var renameTarget by remember { mutableStateOf<NoteEntity?>(null) }
     var deleteTarget by remember { mutableStateOf<NoteEntity?>(null) }
 
+    val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     Scaffold(
+        modifier = Modifier.nestedScroll(scroll.nestedScrollConnection),
+        containerColor = MaterialTheme.colorScheme.surface,
         topBar = {
-            TopAppBar(
-                title = { Text("NotesPlus") },
+            LargeTopAppBar(
+                scrollBehavior = scroll,
+                colors = TopAppBarDefaults.largeTopAppBarColors(scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer),
+                title = { Text("Your notes", style = MaterialTheme.typography.headlineMedium) },
                 actions = {
                     var sortMenu by remember { mutableStateOf(false) }
                     Box {
@@ -176,7 +189,13 @@ fun LibraryScreen(
                 value = state.query, onValueChange = vm::setQuery, singleLine = true,
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                 placeholder = { Text("Search notes") },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+                shape = CircleShape,
+                colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    unfocusedBorderColor = Color.Transparent, focusedBorderColor = MaterialTheme.colorScheme.primary
+                ),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)
             )
             if (!wide) FilterChips(state, onFilter = vm::setFilter)
             if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -190,8 +209,8 @@ fun LibraryScreen(
                 LazyVerticalGrid(
                     columns = GridCells.Adaptive(if (wide) 188.dp else 160.dp),
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 96.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
                     items(state.filtered, key = { it.id }) { note ->
@@ -314,14 +333,14 @@ private fun SyncBanner(state: LibraryState, onOpenSettings: () -> Unit, onSync: 
     }
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .clip(RoundedCornerShape(18.dp))
+            .background(if (state.auth !is AuthState.SignedIn || state.sync is SyncStatus.Failed) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceContainerLow)
             .clickable { if (state.auth !is AuthState.SignedIn) onOpenSettings() else onSync() }
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(icon, contentDescription = null, tint = tint)
-        Spacer(Modifier.width(10.dp))
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(12.dp))
         Text(text, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
 }
@@ -355,10 +374,11 @@ private fun NoteCard(
     var menu by remember { mutableStateOf(false) }
     Card(
         onClick = onOpen,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp, pressedElevation = 2.dp)
     ) {
-        Box(Modifier.fillMaxWidth().aspectRatio(0.78f).background(MaterialTheme.colorScheme.surfaceVariant)) {
+        Box(Modifier.fillMaxWidth().aspectRatio(0.8f).background(MaterialTheme.colorScheme.surfaceContainerHighest)) {
             val bmp = thumb
             if (bmp != null) {
                 Image(bmp.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(), alignment = Alignment.TopCenter)
@@ -369,8 +389,17 @@ private fun NoteCard(
                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+            // Soft scrim so the kind badge stays readable over any page.
+            Box(Modifier.fillMaxWidth().height(56.dp).align(Alignment.TopCenter).background(Brush.verticalGradient(listOf(Color(0x66000000), Color.Transparent))))
+            AssistChip(
+                onClick = onOpen,
+                label = { Text(if (note.kind == NoteKind.PDF) "PDF" else "Notebook", style = MaterialTheme.typography.labelSmall) },
+                colors = AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)),
+                border = null,
+                modifier = Modifier.align(Alignment.TopStart).padding(8.dp).height(26.dp)
+            )
             Box(Modifier.align(Alignment.TopEnd)) {
-                IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, contentDescription = "More") }
+                IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, contentDescription = "More", tint = Color.White) }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                     DropdownMenuItem(text = { Text("Rename") }, onClick = { menu = false; onRename() })
                     DropdownMenuItem(text = { Text("Export annotated PDF") }, onClick = { menu = false; onExport() })
@@ -388,11 +417,10 @@ private fun NoteCard(
                 tint = if (note.syncError != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
             )
         }
-        Column(Modifier.padding(10.dp)) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
             Text(note.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
             val sub = buildString {
-                append(if (note.kind == NoteKind.PDF) "PDF" else "Notebook")
-                append(" · ${note.pageCount} page${if (note.pageCount == 1) "" else "s"}")
+                append("${note.pageCount} page${if (note.pageCount == 1) "" else "s"}")
                 if (note.relativeDir.isNotEmpty()) append(" · ${note.relativeDir}")
             }
             Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
