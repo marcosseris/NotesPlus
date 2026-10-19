@@ -23,6 +23,17 @@ data class CloudFile(
     val sortKey: Int = 0
 ) {
     val isPdf: Boolean get() = !isFolder && (name.endsWith(".pdf", ignoreCase = true) || mimeType == "application/pdf")
+
+    /** Office / Google documents the drive can convert to PDF for us. */
+    val isConvertible: Boolean get() = !isFolder && !isPdf && (CONVERTIBLE_EXTENSIONS.any { name.endsWith(it, ignoreCase = true) } || mimeType in GOOGLE_NATIVE_MIMES)
+
+    /** Anything the browser offers to open. */
+    val isOpenable: Boolean get() = isPdf || isConvertible
+
+    companion object {
+        val CONVERTIBLE_EXTENSIONS = listOf(".pptx", ".ppt", ".ppsx", ".docx", ".doc", ".odp", ".odt")
+        val GOOGLE_NATIVE_MIMES = setOf("application/vnd.google-apps.presentation", "application/vnd.google-apps.document")
+    }
 }
 
 class CloudException(val code: Int, val providerCode: String?, message: String) : IOException(message) {
@@ -48,6 +59,12 @@ interface CloudProvider {
 
     suspend fun download(file: CloudFile, dest: File)
     suspend fun downloadText(file: CloudFile): String
+
+    /**
+     * Fetches [file] as a PDF: a plain download for PDFs, a server-side conversion for
+     * PowerPoint / Word / Google Slides / Google Docs.
+     */
+    suspend fun downloadAsPdf(file: CloudFile, dest: File)
 
     /**
      * Creates or replaces a file. When [existingId] is given the file is updated in place;

@@ -77,7 +77,7 @@ class GoogleDriveProvider(private val http: AuthedHttp) : CloudProvider {
             obj["files"]?.jsonArray?.forEach { out += parse(it.jsonObject) }
             pageToken = obj["nextPageToken"]?.jsonPrimitive?.content
         } while (pageToken != null)
-        return out.filter { it.isFolder || it.isPdf || it.name.endsWith(".ink.json", true) }
+        return out.filter { it.isFolder || it.isOpenable || it.name.endsWith(".ink.json", true) }
     }
 
     override suspend fun listChildren(folderId: String?): List<CloudFile> = when (folderId) {
@@ -119,6 +119,33 @@ class GoogleDriveProvider(private val http: AuthedHttp) : CloudProvider {
         http.openAuthed("$BASE/files/${file.id}?alt=media&supportsAllDrives=true").use { r ->
             if (!r.isSuccessful) fail(r.code, r.message, r.body?.string())
             val body = r.body ?: throw IOException("Empty download body")
+            body.byteStream().use { Files.writeAtomic(dest, it) }
+        }
+    }
+
+    override suspend fun downloadAsPdf(file: CloudFile, dest: File) = withContext(Dispatchers.IO) {
+        if (file.isPdf) return@withContext download(file, dest)
+        if (file.mimeType in CloudFile.GOOGLE_NATIVE_MIMES) return@withContext exportPdf(file.id, dest)
+        // Office file: Drive converts it when copied into the matching Google format.
+        val target = if (file.name.lowercase().let { it.endsWith(".docx") || it.endsWith(".doc") || it.endsWith(".odt") }) "application/vnd.google-apps.document"
+        else "application/vnd.google-apps.presentation"
+        val meta = buildJsonObject { put("name", "NotesPlus temp – ${file.name}"); put("mimeType", target) }.toString()
+        val r = http.execute({ url("$BASE/files/${file.id}/copy?supportsAllDrives=true&fields=id").post(meta.toRequestBody("application/json; charset=UTF-8".toMediaType())) })
+        if (!r.isSuccessful) fail(r)
+        val copyId = json.parseToJsonElement(r.body!!).jsonObject["id"]!!.jsonPrimitive.content
+        try { exportPdf(copyId, dest) } finally {
+            runCatching { http.execute({ url("$BASE/files/$copyId?supportsAllDrives=true").delete() }) }
+        }
+    }
+
+    /** Export links (docs.google.com) have no size cap; files.export is the fallback. */
+    private suspend fun exportPdf(id: String, dest: File) {
+        val meta = getJson("$BASE/files/$id?fields=exportLinks&supportsAllDrives=true")
+        val link = meta["exportLinks"]?.jsonObject?.get("application/pdf")?.jsonPrimitive?.content
+        val url = link ?: "$BASE/files/$id/export?mimeType=application%2Fpdf"
+        http.openAuthed(url).use { r ->
+            if (!r.isSuccessful) fail(r.code, r.message, r.body?.string())
+            val body = r.body ?: throw IOException("Empty export body")
             body.byteStream().use { Files.writeAtomic(dest, it) }
         }
     }

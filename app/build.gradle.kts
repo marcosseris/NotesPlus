@@ -20,7 +20,12 @@ val googleClientId = prop("NOTESPLUS_GOOGLE_CLIENT_ID")
 // CI supplies the build number and a release keystore through the environment.
 val ciVersionCode = System.getenv("NOTESPLUS_VERSION_CODE")?.toIntOrNull()
 val ciVersionName = System.getenv("NOTESPLUS_VERSION_NAME")
-val releaseKeystorePath = System.getenv("NOTESPLUS_KEYSTORE_PATH")
+// A keystore committed to the repository is the default so releases need no secrets at all
+// (this is a private, personal project); CI may override it through the environment.
+val releaseKeystorePath = System.getenv("NOTESPLUS_KEYSTORE_PATH") ?: rootProject.file("signing/notesplus-release.jks").absolutePath
+val releaseKeystorePassword = System.getenv("NOTESPLUS_KEYSTORE_PASSWORD") ?: "notesplus-release"
+val releaseKeyAlias = System.getenv("NOTESPLUS_KEY_ALIAS") ?: "notesplus"
+val releaseKeyPassword = System.getenv("NOTESPLUS_KEY_PASSWORD") ?: "notesplus-release"
 
 android {
     namespace = "com.notesplus.app"
@@ -31,7 +36,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = ciVersionCode ?: 1
-        versionName = ciVersionName ?: "1.0.0-dev"
+        versionName = ciVersionName ?: "1.0.0"
         buildConfigField("String", "ONEDRIVE_CLIENT_ID", "\"$oneDriveClientId\"")
         buildConfigField("String", "ONEDRIVE_REDIRECT_URI", "\"notesplus://auth\"")
         buildConfigField("String", "GOOGLE_CLIENT_ID", "\"$googleClientId\"")
@@ -41,13 +46,11 @@ android {
     }
 
     signingConfigs {
-        if (releaseKeystorePath != null) {
-            create("release") {
-                storeFile = file(releaseKeystorePath)
-                storePassword = System.getenv("NOTESPLUS_KEYSTORE_PASSWORD")
-                keyAlias = System.getenv("NOTESPLUS_KEY_ALIAS")
-                keyPassword = System.getenv("NOTESPLUS_KEY_PASSWORD")
-            }
+        create("release") {
+            storeFile = file(releaseKeystorePath)
+            storePassword = releaseKeystorePassword
+            keyAlias = releaseKeyAlias
+            keyPassword = releaseKeyPassword
         }
     }
     buildTypes {
@@ -55,7 +58,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.findByName("release")
+            signingConfig = signingConfigs.getByName("release")
         }
         debug {
             applicationIdSuffix = ".debug"

@@ -39,6 +39,8 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.Slideshow
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
@@ -264,16 +266,33 @@ private fun StatusBadge(note: NoteEntity?) {
     Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
 }
 
+private fun CloudItemEntity.kindLabel(): String? = when {
+    isFolder -> null
+    name.endsWith(".pdf", true) -> null
+    name.lowercase().let { it.endsWith(".pptx") || it.endsWith(".ppt") || it.endsWith(".ppsx") || it.endsWith(".odp") } -> "PowerPoint · opens as PDF"
+    name.lowercase().let { it.endsWith(".docx") || it.endsWith(".doc") || it.endsWith(".odt") } -> "Word · opens as PDF"
+    '.' !in name -> "Google document · opens as PDF"
+    else -> null
+}
+
+@Composable
+private fun itemIcon(item: CloudItemEntity) = when {
+    item.isFolder -> Icons.Default.Folder
+    item.name.endsWith(".pdf", true) -> Icons.Default.PictureAsPdf
+    item.name.lowercase().let { it.endsWith(".docx") || it.endsWith(".doc") || it.endsWith(".odt") } -> Icons.Default.Description
+    else -> Icons.Default.Slideshow
+}
+
 @Composable
 private fun ItemRow(item: CloudItemEntity, note: NoteEntity?, opening: Boolean, onClick: () -> Unit) {
     ListItem(
         headlineContent = { Text(item.name, maxLines = 2, overflow = TextOverflow.Ellipsis) },
         supportingContent = {
-            if (!item.isFolder) Text(listOfNotNull(Files.humanSize(item.size), item.modifiedAt.takeIf { it > 0 }?.let { formatRelative(it) }, note?.let { "on this device" }).joinToString(" · "))
+            if (!item.isFolder) Text(listOfNotNull(item.kindLabel(), Files.humanSize(item.size).takeIf { item.size > 0 }, item.modifiedAt.takeIf { it > 0 }?.let { formatRelative(it) }, note?.let { "on this device" }).joinToString(" · "))
         },
         leadingContent = {
             Box(Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)).background(if (item.isFolder) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
-                Icon(if (item.isFolder) Icons.Default.Folder else Icons.Default.PictureAsPdf, null, tint = if (item.isFolder) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onPrimaryContainer)
+                Icon(itemIcon(item), null, tint = if (item.isFolder) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onPrimaryContainer)
             }
         },
         trailingContent = { if (opening) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else StatusBadge(note) },
@@ -288,13 +307,13 @@ private fun ItemCard(item: CloudItemEntity, note: NoteEntity?, opening: Boolean,
         Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(if (item.isFolder) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
                 if (opening) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-                else Icon(if (item.isFolder) Icons.Default.Folder else Icons.Default.PictureAsPdf, null, tint = if (item.isFolder) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onPrimaryContainer)
+                else Icon(itemIcon(item), null, tint = if (item.isFolder) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onPrimaryContainer)
             }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(item.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 if (!item.isFolder) Text(
-                    listOfNotNull(Files.humanSize(item.size), note?.let { "on this device" }).joinToString(" · "),
+                    listOfNotNull(item.kindLabel(), Files.humanSize(item.size).takeIf { item.size > 0 }, note?.let { "on this device" }).joinToString(" · "),
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1
                 )
             }

@@ -52,8 +52,10 @@ data class NoteEntity(
     val remoteId: String,
     /** Folder containing the PDF (where the sidecar is written). */
     val parentId: String?,
-    /** PDF file name, e.g. "Lecture 3.pdf". */
+    /** Source file name, e.g. "Lecture 3.pdf" or "Week 2 slides.pptx". */
     val fileName: String,
+    /** True when the local PDF was converted from an Office / Google document on the drive. */
+    val converted: Boolean = false,
     /** Human readable location, e.g. "My Drive / COMP1234 / Week 1". */
     val pathLabel: String,
     val pageCount: Int = 0,
@@ -75,6 +77,6 @@ data class NoteEntity(
     val lastSyncedAt: Long? = null,
     val syncError: String? = null
 ) {
-    val title: String get() = fileName.removeSuffix(".pdf").removeSuffix(".PDF")
+    val title: String get() = fileName.substringBeforeLast('.', fileName)
     val inkFileName: String get() = "$fileName.ink.json"
 }

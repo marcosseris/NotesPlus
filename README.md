@@ -7,6 +7,10 @@ show up on your computer too.
 * **Drive browser** – sign in to OneDrive and/or Google Drive, browse folders (cached, so it
   is instant and works offline), open any PDF. Google Drive shows My Drive, Shared with me
   and Shared drives.
+* **PowerPoint and Word too** – `.pptx`, `.ppt`, `.docx`, `.doc` (and Google Slides / Docs) are
+  converted to PDF by the drive itself when you open them, then annotated like any PDF. Their
+  annotations are published as a sibling `<name>.annotated.pdf` since ink cannot be written
+  into an Office file.
 * **Stylus-first inking** – pressure-sensitive pen, highlighter (multiply blend, auto-straight
   bars), stroke eraser, undo/redo, palm rejection, side-button erase, finger pan/zoom,
   platform motion prediction so ink keeps up with the pen tip.
@@ -63,8 +67,8 @@ on that page.
 3. **OAuth consent screen** → External → fill in the app name and your email → add the scope
    `https://www.googleapis.com/auth/drive` → add your Google account under **Test users**.
 4. **Credentials → Create credentials → OAuth client ID** → Application type **Android** →
-   package name `com.notesplus.app`, SHA-1 of your signing key (see below; for the debug build
-   use `keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android`).
+   package name `com.notesplus.app`, SHA-1 of the release signing key (printed under
+   "Automatic updates" below).
 5. Copy the **Client ID** into **Settings → Google Drive client ID** → Save → **Sign in**.
 
 The redirect used is `com.notesplus.app:/oauth2redirect`, which Google accepts for Android
@@ -91,39 +95,25 @@ OneDrive or Google Drive/…/Week 1/
 
 ## Automatic updates
 
-Android requires every update to be signed with the same key, so the pipeline needs a
-signing key stored in GitHub Secrets. One-time setup:
+Every push to the default branch runs `.github/workflows/release.yml`, which tests, builds a
+signed APK versioned `1.0.<build number>` and publishes it as a GitHub Release. No secrets
+are needed: the signing key lives in `signing/notesplus-release.jks` (password
+`notesplus-release`, alias `notesplus`). This is fine for a private personal repository; if
+you ever make the repository public, move the key into the `NOTESPLUS_KEYSTORE_*` secrets,
+which the workflow prefers when present.
 
-```bash
-keytool -genkeypair -v -keystore notesplus-release.jks -alias notesplus \
-  -keyalg RSA -keysize 2048 -validity 10000 -storepass CHOOSE_A_PASSWORD -keypass CHOOSE_A_PASSWORD \
-  -dname "CN=NotesPlus"
-base64 -w0 notesplus-release.jks > keystore.b64      # macOS: base64 -i notesplus-release.jks -o keystore.b64
-keytool -list -v -keystore notesplus-release.jks -alias notesplus -storepass CHOOSE_A_PASSWORD | grep SHA1
+Its SHA-1, needed when registering the Google OAuth Android client:
+
 ```
-
-In the GitHub repository → **Settings → Secrets and variables → Actions**, add:
-
-| Secret | Value |
-|---|---|
-| `NOTESPLUS_KEYSTORE_BASE64` | contents of `keystore.b64` |
-| `NOTESPLUS_KEYSTORE_PASSWORD` | the password you chose |
-| `NOTESPLUS_KEY_ALIAS` | `notesplus` |
-| `NOTESPLUS_KEY_PASSWORD` | the password you chose |
-| `NOTESPLUS_CLIENT_ID` | (optional) OneDrive client ID baked into builds |
-| `NOTESPLUS_GOOGLE_CLIENT_ID` | (optional) Google client ID baked into builds |
-
-Keep `notesplus-release.jks` somewhere safe; losing it means a fresh install for the next
-version. The SHA-1 printed above is the one to register in the Google OAuth client.
-
-Every push to the default branch then runs `.github/workflows/release.yml`, which tests,
-builds a signed APK versioned `1.0.<run number>` and publishes it as a GitHub Release.
+56:FE:38:DE:BA:00:7E:EF:B4:4A:B1:BA:E6:43:47:93:D2:BE:16:43
+```
 
 On the tablet:
 
-1. Install the first release APK from the Releases page once (uninstall the debug build first).
-2. Because the repository is private, create a fine-grained personal access token with
-   read-only **Contents** permission on this repository and paste it in **Settings → Updates**.
+1. Install the first release APK from the Releases page once (uninstall any debug build first).
+2. The repository is private, so the app needs a fine-grained personal access token with
+   read-only **Contents** permission on this repository: **Settings → Updates** → paste.
+   (Making the repository public removes this step.)
 3. Leave **Update automatically** on. New builds are checked for when the app opens; after the
    first self-install Android 12+ installs later ones without any prompt.
 

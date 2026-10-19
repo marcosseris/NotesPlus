@@ -82,10 +82,11 @@ class SyncEngine(
                 if (existing != null && pdf.exists()) return@withContext existing
                 throw CloudException(404, null, "This file is no longer on ${item.provider.label}")
             }
-            onProgress("Downloading ${item.name}…")
-            provider.download(remote, pdf)
+            val converting = !remote.isPdf
+            onProgress(if (converting) "Converting ${item.name} to PDF…" else "Downloading ${item.name}…")
+            provider.downloadAsPdf(remote, pdf)
             onProgress("Preparing pages…")
-            runCatching { exporter.stripLayer(pdf) }.onFailure { log("Could not inspect ${item.name} for an annotation layer: ${it.message}") }
+            if (!converting) runCatching { exporter.stripLayer(pdf) }.onFailure { log("Could not inspect ${item.name} for an annotation layer: ${it.message}") }
         }
         repo.ensureInkFile(id)
         val pages = if (needDownload || existing?.pageCount == 0) repo.countPdfPages(pdf).coerceAtLeast(0) else existing.pageCount
@@ -96,6 +97,7 @@ class SyncEngine(
         )).copy(
             fileName = remote?.name ?: item.name, parentId = remote?.parentId ?: item.parentId, pathLabel = pathLabel,
             pageCount = pages, sizeBytes = remote?.size ?: item.size, pdfVersion = remote?.version ?: existing?.pdfVersion,
+            converted = remote?.let { !it.isPdf } ?: existing?.converted ?: false,
             lastOpenedAt = now, syncError = null
         )
         repo.upsert(note)
@@ -252,7 +254,9 @@ class SyncEngine(
         val out = File(cacheDir, "writeback/${note.id}.pdf").apply { parentFile?.mkdirs() }
         exporter.exportTo(repo.pdfFile(note.id), ink, out)
         try {
-            when (mode) {
+            // Annotations cannot be written into a PowerPoint/Word file: converted notes always get a sibling PDF.
+            val effective = if (note.converted && mode == WriteBackMode.IN_PLACE) WriteBackMode.SIBLING else mode
+            when (effective) {
                 WriteBackMode.IN_PLACE -> {
                     // Don't clobber a PDF someone replaced since we downloaded it; the pull step handles that.
                     val remote = provider.getFile(note.remoteId)
@@ -283,8 +287,8 @@ class SyncEngine(
         var n = note
         if (remote.version != n.pdfVersion && remote.version != null) {
             log("${note.title} changed on the drive; downloading")
-            provider.download(remote, repo.pdfFile(n.id))
-            runCatching { exporter.stripLayer(repo.pdfFile(n.id)) }
+            provider.downloadAsPdf(remote, repo.pdfFile(n.id))
+            if (remote.isPdf) runCatching { exporter.stripLayer(repo.pdfFile(n.id)) }
             repo.thumbnailFile(n.id).delete()
             n = n.copy(pdfVersion = remote.version, fileName = remote.name, pageCount = repo.countPdfPages(repo.pdfFile(n.id)).coerceAtLeast(0), sizeBytes = remote.size)
             repo.update(n)

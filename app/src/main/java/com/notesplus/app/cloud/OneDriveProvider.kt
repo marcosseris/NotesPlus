@@ -72,7 +72,7 @@ class OneDriveProvider(private val http: AuthedHttp) : CloudProvider {
             obj["value"]?.jsonArray?.forEach { out += parse(it.jsonObject) }
             url = obj["@odata.nextLink"]?.jsonPrimitive?.content ?: break
         }
-        return out.filter { it.isFolder || it.isPdf || it.name.endsWith(".ink.json", true) }
+        return out.filter { it.isFolder || it.isOpenable || it.name.endsWith(".ink.json", true) }
     }
 
     override suspend fun getFile(id: String): CloudFile? = try {
@@ -89,6 +89,16 @@ class OneDriveProvider(private val http: AuthedHttp) : CloudProvider {
         resp.use { r ->
             if (!r.isSuccessful) fail(r.code, r.message, r.body?.string())
             val body = r.body ?: throw IOException("Empty download body")
+            body.byteStream().use { Files.writeAtomic(dest, it) }
+        }
+    }
+
+    /** Graph converts Office documents on the fly: /content?format=pdf (redirects to a download URL). */
+    override suspend fun downloadAsPdf(file: CloudFile, dest: File) = withContext(Dispatchers.IO) {
+        if (file.isPdf) return@withContext download(file, dest)
+        http.openAuthed("$BASE/me/drive/items/${file.id}/content?format=pdf").use { r ->
+            if (!r.isSuccessful) fail(r.code, r.message, r.body?.string())
+            val body = r.body ?: throw IOException("Empty conversion body")
             body.byteStream().use { Files.writeAtomic(dest, it) }
         }
     }
