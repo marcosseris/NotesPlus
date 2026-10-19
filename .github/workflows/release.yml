@@ -27,18 +27,22 @@ jobs:
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Restore signing key (optional secret; falls back to signing/notesplus-release.jks)
+      - name: Restore signing key (secrets are used only when all four are set; otherwise signing/notesplus-release.jks)
         env:
           KEYSTORE_BASE64: ${{ secrets.NOTESPLUS_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.NOTESPLUS_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.NOTESPLUS_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.NOTESPLUS_KEY_PASSWORD }}
         run: |
-          if [ -n "$KEYSTORE_BASE64" ]; then
+          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASSWORD" ]; then
             echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
             echo "NOTESPLUS_KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
-            echo "NOTESPLUS_KEYSTORE_PASSWORD=${{ secrets.NOTESPLUS_KEYSTORE_PASSWORD }}" >> "$GITHUB_ENV"
-            echo "NOTESPLUS_KEY_ALIAS=${{ secrets.NOTESPLUS_KEY_ALIAS }}" >> "$GITHUB_ENV"
-            echo "NOTESPLUS_KEY_PASSWORD=${{ secrets.NOTESPLUS_KEY_PASSWORD }}" >> "$GITHUB_ENV"
+            echo "NOTESPLUS_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+            echo "NOTESPLUS_KEY_ALIAS=$KEY_ALIAS" >> "$GITHUB_ENV"
+            echo "NOTESPLUS_KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
+            echo "Using the keystore from repository secrets."
           else
-            echo "Using the keystore committed in signing/."
+            echo "Using the keystore committed in signing/ (secrets incomplete or absent)."
           fi
 
       - name: Unit tests
