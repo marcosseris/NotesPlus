@@ -67,9 +67,12 @@ data class NoteEntity(
     /** Version of the PDF we have locally. */
     val pdfVersion: String? = null,
 
+    /** Sidecar in the hidden .ink folder. */
     val inkRemoteId: String? = null,
     /** Version marker of the sidecar last synced. */
     val inkVersion: String? = null,
+    /** A sidecar still sitting next to the document (pre-.ink layout); deleted once the move is uploaded. */
+    val legacyInkRemoteId: String? = null,
     val inkDirty: Boolean = false,
     /** The annotated PDF on the drive is behind the ink and must be rewritten. */
     val writeBackPending: Boolean = false,

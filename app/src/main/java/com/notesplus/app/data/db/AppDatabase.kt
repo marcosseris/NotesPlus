@@ -12,7 +12,7 @@ class Converters {
     @TypeConverter fun stringToProvider(s: String): Provider = Provider.valueOf(s)
 }
 
-@Database(entities = [NoteEntity::class, CloudItemEntity::class, FolderStateEntity::class], version = 3, exportSchema = true)
+@Database(entities = [NoteEntity::class, CloudItemEntity::class, FolderStateEntity::class], version = 4, exportSchema = true)
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun notes(): NoteDao

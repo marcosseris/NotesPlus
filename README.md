@@ -18,8 +18,8 @@ show up on your computer too.
   with recent colours.
 * **Shapes** – line, arrow, rectangle, ellipse, triangle tools, and *hold-to-snap*: pause the pen
   at the end of a rough stroke and it becomes a clean shape.
-* **Annotations you can always edit** – strokes live in a small `<name>.pdf.ink.json` next to
-  the PDF. Reopen any annotated PDF later, erase individual strokes or everything, add more.
+* **Annotations you can always edit** – strokes live in a small `<name>.pdf.ink.json` inside a
+  hidden `.ink` folder next to the PDF. Reopen any annotated PDF later, erase individual strokes or everything, add more.
   Two devices editing offline merge cleanly instead of overwriting each other.
 * **Visible everywhere** – after you stop editing, the PDF on your drive is rewritten with your
   ink on a separate, marked layer. Any viewer shows it; Acrobat lets you hide the layer. The
@@ -79,9 +79,13 @@ an "unverified app" warning once; continue past it.
 
 ```
 OneDrive or Google Drive/…/Week 1/
-  Lecture 3.pdf            ← rewritten with your ink on a marked layer (original pages intact)
-  Lecture 3.pdf.ink.json   ← your strokes (page points, per page); the source of truth
+  Lecture 3.pdf                  ← rewritten with your ink on a marked layer (original pages intact)
+  .ink/Lecture 3.pdf.ink.json    ← your strokes (page points, per page); the source of truth
 ```
+
+Builds before the `.ink` folder kept the sidecar next to the PDF. The app still reads that
+location; whenever it finds one it merges it, uploads it into `.ink/` and only then deletes
+the old file. The first sync after updating does this for every note you have opened.
 
 * Opening a PDF downloads it, strips any NotesPlus layer so the local copy is pristine, and
   merges a remote `.ink.json` if one exists.

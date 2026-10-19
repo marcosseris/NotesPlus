@@ -107,18 +107,55 @@ class SyncEngine(
         note
     }
 
-    /** Downloads and merges the remote sidecar when it differs from what we last synced. */
+    /** Cache of ".ink" folder ids per document folder (provider:parentId -> folder id). */
+    private val inkFolders = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    private suspend fun inkFolder(provider: CloudProvider, parentId: String, create: Boolean): String? {
+        val key = "${provider.kind}:$parentId"
+        inkFolders[key]?.let { return it }
+        val found = if (create) provider.ensureFolder(parentId, CloudProvider.INK_FOLDER)
+        else provider.findChild(parentId, CloudProvider.INK_FOLDER)?.takeIf { it.isFolder }
+        return found?.id?.also { inkFolders[key] = it }
+    }
+
+    /**
+     * Brings remote annotations into the local copy. Looks in the hidden .ink folder first and
+     * also at the old location next to the document; a sidecar found there is merged in and
+     * scheduled to move (uploaded to .ink, then deleted) so nothing is ever lost.
+     */
     private suspend fun pullSidecar(provider: CloudProvider, note: NoteEntity): NoteEntity {
         val parent = note.parentId ?: return note
-        val remoteInk = provider.findChild(parent, note.inkFileName) ?: return note
-        if (remoteInk.id == note.inkRemoteId && remoteInk.version != null && remoteInk.version == note.inkVersion) return note
+        var n = note
+
+        // 1. Legacy sidecar next to the document (layout used before .ink).
+        val legacy = provider.findChild(parent, n.inkFileName)?.takeIf { !it.isFolder }
+        if (legacy != null) {
+            val alreadyKnown = legacy.id == n.inkRemoteId && legacy.version == n.inkVersion
+            if (!alreadyKnown && legacy.id != n.legacyInkRemoteId) {
+                val doc = runCatching { InkJson.decode(provider.downloadText(legacy)) }.getOrNull()
+                if (doc != null) repo.mergeRemoteInk(n.id, doc) else log("Ignoring unreadable ${legacy.name}")
+            }
+            val fresh = repo.get(n.id) ?: n
+            n = fresh.copy(
+                legacyInkRemoteId = legacy.id, inkDirty = true,
+                inkRemoteId = if (fresh.inkRemoteId == legacy.id) null else fresh.inkRemoteId,
+                inkVersion = if (fresh.inkRemoteId == legacy.id) null else fresh.inkVersion
+            )
+            repo.update(n)
+            log("Annotations for ${n.title} will move into ${CloudProvider.INK_FOLDER}/")
+        }
+
+        // 2. Sidecar in the .ink folder.
+        val folderId = inkFolder(provider, parent, create = false) ?: return n
+        val remoteInk = provider.findChild(folderId, n.inkFileName)?.takeIf { !it.isFolder } ?: return n
+        if (remoteInk.id == n.inkRemoteId && remoteInk.version != null && remoteInk.version == n.inkVersion) return n
         val text = provider.downloadText(remoteInk)
-        val doc = runCatching { InkJson.decode(text) }.getOrElse { log("Ignoring unreadable ${remoteInk.name}"); return note }
-        val (_, localHadMore) = repo.mergeRemoteInk(note.id, doc)
-        val fresh = repo.get(note.id) ?: note
+        val doc = runCatching { InkJson.decode(text) }.getOrElse { log("Ignoring unreadable ${remoteInk.name}"); return n }
+        val (_, localHadMore) = repo.mergeRemoteInk(n.id, doc)
+        val fresh = repo.get(n.id) ?: n
         val updated = fresh.copy(inkRemoteId = remoteInk.id, inkVersion = remoteInk.version, inkDirty = fresh.inkDirty || localHadMore, lastSyncedAt = System.currentTimeMillis())
         repo.update(updated)
-        log("Merged annotations for ${note.title}" + if (localHadMore) " (local additions will upload)" else "")
+        log("Merged annotations for ${n.title}" + if (localHadMore) " (local additions will upload)" else "")
         return updated
     }
 
@@ -176,7 +213,12 @@ class SyncEngine(
         }
 
         // 2. Pull for recently opened notes (annotations made on other devices, replaced PDFs).
-        for (note in repo.recent(PULL_RECENT)) {
+        // After the update that introduced the .ink folder, visit every note once so all
+        // sidecars move; afterwards only recent notes are checked.
+        val migrateAll = !settings.inkFolderMigrated
+        val toPull = if (migrateAll) repo.all() else repo.recent(PULL_RECENT)
+        var migrationComplete = migrateAll
+        for (note in toPull) {
             if (!cloud.isSignedIn(note.provider)) continue
             val provider = cloud.providers.getValue(note.provider)
             try {
@@ -184,7 +226,15 @@ class SyncEngine(
                 if (pullNote(provider, note)) pulled++
             } catch (e: Exception) {
                 log("Check of ${note.title} failed: ${e.message}")
+                migrationComplete = false
             }
+        }
+        if (migrateAll) {
+            // Uploads of moved sidecars happen in the push step; run it once more now.
+            for (note in repo.pending().filter { it.legacyInkRemoteId != null && cloud.isSignedIn(it.provider) }) {
+                try { pushSidecar(cloud.providers.getValue(note.provider), note); uploaded++ } catch (e: Exception) { migrationComplete = false; log("Move of ${note.title} failed: ${e.message}") }
+            }
+            if (migrationComplete) { prefs.setInkFolderMigrated(true); log("All annotation files now live in ${CloudProvider.INK_FOLDER}/ folders") }
         }
 
         val msg = when {
@@ -198,7 +248,8 @@ class SyncEngine(
     /** Uploads the sidecar; on a conflict merges the remote copy first and retries. */
     private suspend fun pushSidecar(provider: CloudProvider, initial: NoteEntity): NoteEntity {
         var note = initial
-        val parent = note.parentId ?: throw CloudException(400, null, "Unknown folder for ${note.title}")
+        val docParent = note.parentId ?: throw CloudException(400, null, "Unknown folder for ${note.title}")
+        val parent = inkFolder(provider, docParent, create = true) ?: throw CloudException(500, null, "Could not create the ${CloudProvider.INK_FOLDER} folder")
         var attempts = 0
         while (true) {
             attempts++
@@ -223,8 +274,24 @@ class SyncEngine(
                 note = fresh.copy(inkRemoteId = item.id, inkVersion = item.version, inkDirty = !stillSame, lastSyncedAt = System.currentTimeMillis())
                 repo.update(note)
                 log("Uploaded annotations for ${note.title}")
+                // The move is complete only now: the old copy next to the document can go.
+                note.legacyInkRemoteId?.let { legacyId ->
+                    if (legacyId != item.id) {
+                        runCatching { provider.delete(legacyId) }
+                            .onSuccess { log("Removed old annotation file next to ${note.title}") }
+                            .onFailure { log("Could not remove old annotation file for ${note.title}: ${it.message}") }
+                    }
+                    note = note.copy(legacyInkRemoteId = null)
+                    repo.update(note)
+                }
                 return note
             } catch (e: CloudException) {
+                if (e.isNotFound && attempts < 3 && note.inkRemoteId == null) {
+                    // The .ink folder we cached may have been deleted: look it up again.
+                    inkFolders.remove("${provider.kind}:$docParent")
+                    inkFolder(provider, docParent, create = true)
+                    continue
+                }
                 if ((e.isPreconditionFailed || e.isNotFound) && attempts < 3 && note.inkRemoteId != null) {
                     if (e.isNotFound) note = note.copy(inkRemoteId = null, inkVersion = null)
                     else {

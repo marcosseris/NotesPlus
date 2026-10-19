@@ -1,12 +1,12 @@
 {
   "formatVersion": 1,
   "database": {
-    "version": 3,
-    "identityHash": "ba13333a2f0090cf93d03d52c3c36279",
+    "version": 4,
+    "identityHash": "aa73d96f83516cf0bf6f8a97bbc47ef2",
     "entities": [
       {
         "tableName": "notes",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `provider` TEXT NOT NULL, `remoteId` TEXT NOT NULL, `parentId` TEXT, `fileName` TEXT NOT NULL, `converted` INTEGER NOT NULL, `pathLabel` TEXT NOT NULL, `pageCount` INTEGER NOT NULL, `sizeBytes` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, `modifiedAt` INTEGER NOT NULL, `lastOpenedAt` INTEGER NOT NULL, `pdfVersion` TEXT, `inkRemoteId` TEXT, `inkVersion` TEXT, `inkDirty` INTEGER NOT NULL, `writeBackPending` INTEGER NOT NULL, `lastSyncedAt` INTEGER, `syncError` TEXT, PRIMARY KEY(`id`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `provider` TEXT NOT NULL, `remoteId` TEXT NOT NULL, `parentId` TEXT, `fileName` TEXT NOT NULL, `converted` INTEGER NOT NULL, `pathLabel` TEXT NOT NULL, `pageCount` INTEGER NOT NULL, `sizeBytes` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, `modifiedAt` INTEGER NOT NULL, `lastOpenedAt` INTEGER NOT NULL, `pdfVersion` TEXT, `inkRemoteId` TEXT, `inkVersion` TEXT, `legacyInkRemoteId` TEXT, `inkDirty` INTEGER NOT NULL, `writeBackPending` INTEGER NOT NULL, `lastSyncedAt` INTEGER, `syncError` TEXT, PRIMARY KEY(`id`))",
         "fields": [
           {
             "fieldPath": "id",
@@ -95,6 +95,12 @@
           {
             "fieldPath": "inkVersion",
             "columnName": "inkVersion",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "legacyInkRemoteId",
+            "columnName": "legacyInkRemoteId",
             "affinity": "TEXT",
             "notNull": false
           },
@@ -266,7 +272,7 @@
     "views": [],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'ba13333a2f0090cf93d03d52c3c36279')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'aa73d96f83516cf0bf6f8a97bbc47ef2')"
     ]
   }
 }

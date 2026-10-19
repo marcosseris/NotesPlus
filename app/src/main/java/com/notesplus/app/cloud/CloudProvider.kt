@@ -75,6 +75,17 @@ interface CloudProvider {
 
     suspend fun uploadBytes(parentId: String, name: String, bytes: ByteArray, mimeType: String, existingId: String?, ifMatch: String?): CloudFile
 
+    /** Finds or creates a direct subfolder. */
+    suspend fun ensureFolder(parentId: String, name: String): CloudFile
+
+    /** Deletes a file (no error when it is already gone). */
+    suspend fun delete(id: String)
+
     /** True when conditional uploads ([CloudFile.eTag]) are honoured. */
     val supportsConditionalUpload: Boolean
+
+    companion object {
+        /** Hidden folder, next to the documents, that holds the annotation sidecars. */
+        const val INK_FOLDER = ".ink"
+    }
 }

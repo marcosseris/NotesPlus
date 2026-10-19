@@ -50,7 +50,9 @@ data class Settings(
     val recentColors: List<Int> = emptyList(),
     /** Check GitHub for new builds and install them automatically. */
     val autoUpdate: Boolean = true,
-    val lastUpdateCheck: Long = 0L
+    val lastUpdateCheck: Long = 0L,
+    /** Set once every known note has had its sidecar moved into the .ink folder. */
+    val inkFolderMigrated: Boolean = false
 ) {
     fun clientId(p: Provider): String = when (p) {
         Provider.ONEDRIVE -> oneDriveClientIdOverride.ifBlank { BuildConfig.ONEDRIVE_CLIENT_ID }
@@ -85,6 +87,7 @@ class Prefs(private val context: Context) {
         val recentColors = stringPreferencesKey("recent_colors")
         val autoUpdate = booleanPreferencesKey("auto_update")
         val lastUpdateCheck = longPreferencesKey("last_update_check")
+        val inkFolderMigrated = booleanPreferencesKey("ink_folder_migrated")
     }
 
     val settings: Flow<Settings> = context.dataStore.data.map { p ->
@@ -113,7 +116,8 @@ class Prefs(private val context: Context) {
             straightHighlighter = p[K.straightHighlighter] ?: d.straightHighlighter,
             recentColors = p[K.recentColors]?.split(',')?.mapNotNull { it.toLongOrNull()?.toInt() } ?: emptyList(),
             autoUpdate = p[K.autoUpdate] ?: d.autoUpdate,
-            lastUpdateCheck = p[K.lastUpdateCheck] ?: 0L
+            lastUpdateCheck = p[K.lastUpdateCheck] ?: 0L,
+            inkFolderMigrated = p[K.inkFolderMigrated] ?: false
         )
     }
 
@@ -141,6 +145,7 @@ class Prefs(private val context: Context) {
     suspend fun setMotionPrediction(v: Boolean) = context.dataStore.edit { it[K.motionPrediction] = v }
     suspend fun setStraightHighlighter(v: Boolean) = context.dataStore.edit { it[K.straightHighlighter] = v }
     suspend fun setAutoUpdate(v: Boolean) = context.dataStore.edit { it[K.autoUpdate] = v }
+    suspend fun setInkFolderMigrated(v: Boolean) = context.dataStore.edit { it[K.inkFolderMigrated] = v }
     suspend fun setLastUpdateCheck(v: Long) = context.dataStore.edit { it[K.lastUpdateCheck] = v }
     suspend fun pushRecentColor(color: Int) = context.dataStore.edit { p ->
         val existing = p[K.recentColors]?.split(',')?.mapNotNull { it.toLongOrNull()?.toInt() } ?: emptyList()

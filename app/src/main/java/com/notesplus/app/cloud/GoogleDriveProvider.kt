@@ -80,7 +80,11 @@ class GoogleDriveProvider(private val http: AuthedHttp) : CloudProvider {
         return out.filter { it.isFolder || it.isOpenable || it.name.endsWith(".ink.json", true) }
     }
 
-    override suspend fun listChildren(folderId: String?): List<CloudFile> = when (folderId) {
+    /** Listing for the browser: hides the .ink sidecar folders ([findChild] must still see them). */
+    override suspend fun listChildren(folderId: String?): List<CloudFile> =
+        rawChildren(folderId).filterNot { it.isFolder && it.name == CloudProvider.INK_FOLDER }
+
+    private suspend fun rawChildren(folderId: String?): List<CloudFile> = when (folderId) {
         null -> listOf(
             CloudFile(ROOT_MY_DRIVE, "My Drive", true, 0, 0, null, isVirtual = true, sortKey = -3),
             CloudFile(ROOT_SHARED, "Shared with me", true, 0, 0, null, isVirtual = true, sortKey = -2),
@@ -113,6 +117,23 @@ class GoogleDriveProvider(private val http: AuthedHttp) : CloudProvider {
         val escaped = name.replace("\\", "\\\\").replace("'", "\\'")
         val parentExpr = if (parentId == ROOT_MY_DRIVE) "'root' in parents" else "'$parentId' in parents"
         return query("$parentExpr and name = '$escaped' and trashed = false").firstOrNull { it.name.equals(name, ignoreCase = true) }
+    }
+
+    override suspend fun ensureFolder(parentId: String, name: String): CloudFile {
+        findChild(parentId, name)?.let { if (it.isFolder) return it }
+        val parent = if (parentId == ROOT_MY_DRIVE) "root" else parentId
+        val meta = buildJsonObject {
+            put("name", name); put("mimeType", FOLDER_MIME)
+            putJsonArray("parents") { add(kotlinx.serialization.json.JsonPrimitive(parent)) }
+        }.toString()
+        val r = http.execute({ url("$BASE/files?supportsAllDrives=true&fields=${q(FIELDS)}").post(meta.toRequestBody("application/json; charset=UTF-8".toMediaType())) })
+        if (!r.isSuccessful) fail(r)
+        return parse(json.parseToJsonElement(r.body!!).jsonObject)
+    }
+
+    override suspend fun delete(id: String) {
+        val r = http.execute({ url("$BASE/files/$id?supportsAllDrives=true").delete() })
+        if (!r.isSuccessful && r.code != 404) fail(r)
     }
 
     override suspend fun download(file: CloudFile, dest: File) = withContext(Dispatchers.IO) {

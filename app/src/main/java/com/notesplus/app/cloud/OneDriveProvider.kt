@@ -72,7 +72,7 @@ class OneDriveProvider(private val http: AuthedHttp) : CloudProvider {
             obj["value"]?.jsonArray?.forEach { out += parse(it.jsonObject) }
             url = obj["@odata.nextLink"]?.jsonPrimitive?.content ?: break
         }
-        return out.filter { it.isFolder || it.isOpenable || it.name.endsWith(".ink.json", true) }
+        return out.filter { (it.isFolder && it.name != CloudProvider.INK_FOLDER) || it.isOpenable || it.name.endsWith(".ink.json", true) }
     }
 
     override suspend fun getFile(id: String): CloudFile? = try {
@@ -82,6 +82,20 @@ class OneDriveProvider(private val http: AuthedHttp) : CloudProvider {
     override suspend fun findChild(parentId: String, name: String): CloudFile? {
         val url = "$BASE/me/drive/items/$parentId:/${enc(name)}?\$select=$SELECT"
         return try { parse(getJson(url)) } catch (e: CloudException) { if (e.isNotFound) null else throw e }
+    }
+
+    override suspend fun ensureFolder(parentId: String, name: String): CloudFile {
+        findChild(parentId, name)?.let { if (it.isFolder) return it }
+        val body = buildJsonObject { put("name", name); putJsonObject("folder") {}; put("@microsoft.graph.conflictBehavior", "fail") }.toString().toRequestBody(JSON)
+        val r = http.execute({ url("$BASE/me/drive/items/$parentId/children").post(body) })
+        if (r.code == 409) return findChild(parentId, name) ?: fail(r)
+        if (!r.isSuccessful) fail(r)
+        return parse(json.parseToJsonElement(r.body!!).jsonObject)
+    }
+
+    override suspend fun delete(id: String) {
+        val r = http.execute({ url("$BASE/me/drive/items/$id").delete() })
+        if (!r.isSuccessful && r.code != 404) fail(r)
     }
 
     override suspend fun download(file: CloudFile, dest: File) = withContext(Dispatchers.IO) {
