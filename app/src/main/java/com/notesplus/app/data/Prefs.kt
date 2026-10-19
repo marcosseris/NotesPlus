@@ -12,6 +12,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.notesplus.app.BuildConfig
 import com.notesplus.app.data.db.Provider
+import com.notesplus.app.ink.PaperStyle
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -24,6 +25,19 @@ enum class WriteBackMode(val label: String, val description: String) {
     SIBLING("Separate annotated copy", "Keeps the original PDF as is and writes “<name>.annotated.pdf” next to it."),
     OFF("Off", "Only the small annotation file is synced; other devices need NotesPlus to see your ink.")
 }
+
+/** Default pen inks: neutral to vivid, all legible on white paper. */
+val DEFAULT_PEN_PALETTE: List<Int> = listOf(
+    0xFF1C1C1E, 0xFF5F6368, 0xFF1F4E79, 0xFF2962FF, 0xFF0288D1, 0xFF00897B,
+    0xFF2E7D32, 0xFF7CB342, 0xFFFFB300, 0xFFEF6C00, 0xFFD32F2F, 0xFFC2185B,
+    0xFFEC407A, 0xFF6A1B9A, 0xFF7E57C2, 0xFF5D4037
+).map { it.toInt() }
+
+/** Default highlighters: light, saturated colours that multiply nicely over text. */
+val DEFAULT_HIGHLIGHTER_PALETTE: List<Int> = listOf(
+    0xFFFFE627, 0xFFB4FF4A, 0xFF69F0AE, 0xFF4FD0FF, 0xFF82B1FF, 0xFFFF7EB6,
+    0xFFEA80FC, 0xFFFFA726, 0xFFFFCC80, 0xFFCFD8DC
+).map { it.toInt() }
 
 data class Settings(
     val oneDriveClientIdOverride: String = "",
@@ -48,6 +62,11 @@ data class Settings(
     val motionPrediction: Boolean = true,
     val straightHighlighter: Boolean = true,
     val recentColors: List<Int> = emptyList(),
+    /** User-editable palettes shown on the rail and in the picker. */
+    val penPalette: List<Int> = DEFAULT_PEN_PALETTE,
+    val highlighterPalette: List<Int> = DEFAULT_HIGHLIGHTER_PALETTE,
+    /** Paper pattern for pages inserted into a PDF. */
+    val insertPaper: PaperStyle = PaperStyle.RULED,
     /** Check GitHub for new builds and install them automatically. */
     val autoUpdate: Boolean = true,
     val lastUpdateCheck: Long = 0L,
@@ -85,6 +104,9 @@ class Prefs(private val context: Context) {
         val motionPrediction = booleanPreferencesKey("motion_prediction")
         val straightHighlighter = booleanPreferencesKey("straight_highlighter")
         val recentColors = stringPreferencesKey("recent_colors")
+        val penPalette = stringPreferencesKey("pen_palette")
+        val hlPalette = stringPreferencesKey("hl_palette")
+        val insertPaper = stringPreferencesKey("insert_paper")
         val autoUpdate = booleanPreferencesKey("auto_update")
         val lastUpdateCheck = longPreferencesKey("last_update_check")
         val inkFolderMigrated = booleanPreferencesKey("ink_folder_migrated")
@@ -115,6 +137,9 @@ class Prefs(private val context: Context) {
             motionPrediction = p[K.motionPrediction] ?: d.motionPrediction,
             straightHighlighter = p[K.straightHighlighter] ?: d.straightHighlighter,
             recentColors = p[K.recentColors]?.split(',')?.mapNotNull { it.toLongOrNull()?.toInt() } ?: emptyList(),
+            penPalette = p[K.penPalette]?.toColorList()?.takeIf { it.isNotEmpty() } ?: DEFAULT_PEN_PALETTE,
+            highlighterPalette = p[K.hlPalette]?.toColorList()?.takeIf { it.isNotEmpty() } ?: DEFAULT_HIGHLIGHTER_PALETTE,
+            insertPaper = p[K.insertPaper]?.let { runCatching { PaperStyle.valueOf(it) }.getOrNull() } ?: PaperStyle.RULED,
             autoUpdate = p[K.autoUpdate] ?: d.autoUpdate,
             lastUpdateCheck = p[K.lastUpdateCheck] ?: 0L,
             inkFolderMigrated = p[K.inkFolderMigrated] ?: false
@@ -144,6 +169,9 @@ class Prefs(private val context: Context) {
     suspend fun setLastShape(v: Int) = context.dataStore.edit { it[K.lastShape] = v }
     suspend fun setMotionPrediction(v: Boolean) = context.dataStore.edit { it[K.motionPrediction] = v }
     suspend fun setStraightHighlighter(v: Boolean) = context.dataStore.edit { it[K.straightHighlighter] = v }
+    suspend fun setPenPalette(colors: List<Int>) = context.dataStore.edit { it[K.penPalette] = colors.joinToString(",") { c -> c.toLong().toString() } }
+    suspend fun setHighlighterPalette(colors: List<Int>) = context.dataStore.edit { it[K.hlPalette] = colors.joinToString(",") { c -> c.toLong().toString() } }
+    suspend fun setInsertPaper(v: PaperStyle) = context.dataStore.edit { it[K.insertPaper] = v.name }
     suspend fun setAutoUpdate(v: Boolean) = context.dataStore.edit { it[K.autoUpdate] = v }
     suspend fun setInkFolderMigrated(v: Boolean) = context.dataStore.edit { it[K.inkFolderMigrated] = v }
     suspend fun setLastUpdateCheck(v: Long) = context.dataStore.edit { it[K.lastUpdateCheck] = v }
@@ -152,3 +180,5 @@ class Prefs(private val context: Context) {
         p[K.recentColors] = (listOf(color) + existing.filter { it != color }).take(12).joinToString(",") { it.toLong().toString() }
     }
 }
+
+private fun String.toColorList(): List<Int> = split(',').mapNotNull { it.toLongOrNull()?.toInt() }

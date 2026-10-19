@@ -85,6 +85,29 @@ data class InkPage(
     val strokes: List<Stroke> = emptyList()
 )
 
+/**
+ * A blank page the user inserted between PDF pages. It sits after source page [after]
+ * (-1 = before the first page); [order] sorts inserts that share the same [after].
+ * Like strokes it is immutable and identified by id, so it merges and tombstones cleanly.
+ */
+@Serializable
+data class PageInsert(
+    val id: String,
+    val after: Int,
+    val order: Double,
+    val w: Float,
+    val h: Float,
+    val paper: PaperStyle = PaperStyle.PLAIN,
+    val t: Long,
+    val strokes: List<Stroke> = emptyList()
+)
+
+/** Identifies a page independently of its position: a PDF page by index, an inserted page by id. */
+sealed class PageKey {
+    data class Source(val index: Int) : PageKey()
+    data class Insert(val id: String) : PageKey()
+}
+
 @Serializable
 data class InkDocument(
     val format: String = FORMAT,
@@ -95,7 +118,9 @@ data class InkDocument(
     val pageCount: Int = 0,
     val paper: PaperStyle = PaperStyle.PLAIN,
     val pages: List<InkPage> = emptyList(),
-    /** Tombstones: ids of strokes that were erased. */
+    /** Blank pages inserted by the user (see [PageInsert]). */
+    val inserts: List<PageInsert> = emptyList(),
+    /** Tombstones: ids of strokes (and inserted pages) that were erased. */
     val deleted: Set<String> = emptySet(),
     val modified: Long = 0L
 ) {
@@ -103,7 +128,39 @@ data class InkDocument(
 
     fun page(index: Int): InkPage? = pages.firstOrNull { it.index == index }
 
-    fun strokeCount(): Int = pages.sumOf { it.strokes.size }
+    fun strokeCount(): Int = pages.sumOf { it.strokes.size } + inserts.sumOf { it.strokes.size }
+
+    fun insert(id: String): PageInsert? = inserts.firstOrNull { it.id == id }
+
+    /** Live inserted pages in document order. */
+    fun orderedInserts(): List<PageInsert> = inserts.filterNot { it.id in deleted }.sortedWith(compareBy({ it.after }, { it.order }, { it.t }))
+
+    fun strokesAt(key: PageKey): List<Stroke> = when (key) {
+        is PageKey.Source -> page(key.index)?.strokes ?: emptyList()
+        is PageKey.Insert -> insert(key.id)?.strokes ?: emptyList()
+    }
+
+    fun addStroke(key: PageKey, stroke: Stroke, now: Long = System.currentTimeMillis()): InkDocument = when (key) {
+        is PageKey.Source -> addStroke(key.index, stroke, now)
+        is PageKey.Insert -> copy(inserts = inserts.map { if (it.id == key.id) it.copy(strokes = it.strokes + stroke) else it }, modified = now)
+    }
+
+    fun removeStrokes(key: PageKey, ids: Collection<String>, now: Long = System.currentTimeMillis()): InkDocument = when (key) {
+        is PageKey.Source -> removeStrokes(key.index, ids, now)
+        is PageKey.Insert -> {
+            val idSet = ids.toSet()
+            copy(inserts = inserts.map { if (it.id == key.id) it.copy(strokes = it.strokes.filterNot { s -> s.id in idSet }) else it }, deleted = deleted + idSet, modified = now)
+        }
+    }
+
+    fun addInsert(insert: PageInsert, now: Long = System.currentTimeMillis()): InkDocument =
+        copy(inserts = inserts.filterNot { it.id == insert.id } + insert, modified = now)
+
+    /** Removes an inserted page and everything on it (tombstoned so the removal syncs). */
+    fun removeInsert(id: String, now: Long = System.currentTimeMillis()): InkDocument {
+        val ins = insert(id) ?: return this
+        return copy(inserts = inserts.filterNot { it.id == id }, deleted = deleted + id + ins.strokes.map { it.id }, modified = now)
+    }
 
     fun withPage(page: InkPage): InkDocument {
         val others = pages.filter { it.index != page.index }
@@ -135,6 +192,12 @@ data class InkDocument(
             if (p.strokes.isEmpty()) continue
             sb.append(p.index).append(':')
             p.strokes.map { it.id }.sorted().forEach { sb.append(it).append(',') }
+            sb.append(';')
+        }
+        sb.append('|')
+        for (ins in inserts.sortedBy { it.id }) {
+            sb.append(ins.id).append('@').append(ins.after).append('/').append(ins.order).append(':')
+            ins.strokes.map { it.id }.sorted().forEach { sb.append(it).append(',') }
             sb.append(';')
         }
         sb.append('|')
@@ -185,6 +248,19 @@ object InkMerge {
             val strokes = byId.values.filterNot { it.id in deleted }.sortedBy { it.t }
             InkPage(idx, strokes)
         }.filter { it.strokes.isNotEmpty() }
+        // Inserted pages: union by id, strokes merged inside each, tombstones win.
+        val insertsById = LinkedHashMap<String, PageInsert>()
+        for (ins in local.inserts + remote.inserts) {
+            if (ins.id in deleted) continue
+            val existing = insertsById[ins.id]
+            if (existing == null) insertsById[ins.id] = ins.copy(strokes = ins.strokes.filterNot { it.id in deleted })
+            else {
+                val byId = LinkedHashMap<String, Stroke>()
+                existing.strokes.forEach { byId[it.id] = it }
+                ins.strokes.forEach { if (!byId.containsKey(it.id)) byId[it.id] = it }
+                insertsById[ins.id] = existing.copy(strokes = byId.values.filterNot { it.id in deleted }.sortedBy { it.t })
+            }
+        }
         val newer = if (remote.modified > local.modified) remote else local
         val pageSize = local.pageSize ?: remote.pageSize
         // Only standalone notebooks track their own page count; PDFs take it from the file.
@@ -194,6 +270,7 @@ object InkMerge {
             pageCount = pageCount,
             paper = newer.paper,
             pages = pages,
+            inserts = insertsById.values.toList(),
             deleted = deleted,
             modified = maxOf(local.modified, remote.modified)
         )

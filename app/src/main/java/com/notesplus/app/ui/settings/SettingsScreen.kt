@@ -119,6 +119,17 @@ fun SettingsScreen(onBack: () -> Unit) {
             SwitchRow("Straight highlighter", "Roughly straight highlighter strokes become ruler-straight bars when you lift the pen", ui.settings.straightHighlighter, vm::setStraightHighlighter)
             SwitchRow("Predict pen movement", "Draws a short predicted tail so ink keeps up with the pen; turn off if strokes overshoot", ui.settings.motionPrediction, vm::setMotionPrediction)
             SwitchRow("Tool rail on the right", "For left-handed use on tablets", ui.settings.railOnRight, vm::setRailOnRight)
+            ListItem(
+                headlineContent = { Text("Colour palettes") },
+                supportingContent = { Text("Long-press a swatch in the editor to change it. Reset restores the built-in colours.") },
+                trailingContent = { TextButton(onClick = { vm.resetPalettes() }) { Text("Reset") } }
+            )
+            Text("Paper for inserted pages", Modifier.padding(start = 16.dp, top = 12.dp, end = 16.dp), style = MaterialTheme.typography.titleSmall)
+            Row(Modifier.padding(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                com.notesplus.app.ink.PaperStyle.entries.forEach { p ->
+                    androidx.compose.material3.FilterChip(selected = ui.settings.insertPaper == p, onClick = { vm.setInsertPaper(p) }, label = { Text(p.name.lowercase().replaceFirstChar { it.uppercase() }) })
+                }
+            }
 
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             Section("Updates")

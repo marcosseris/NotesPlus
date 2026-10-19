@@ -5,6 +5,10 @@ import com.notesplus.app.data.NoteRepository
 import com.notesplus.app.data.db.NoteEntity
 import com.notesplus.app.ink.InkDocument
 import com.notesplus.app.ink.InkGeometry
+import com.notesplus.app.ink.PageInsert
+import com.notesplus.app.ink.PaperStyle
+import com.notesplus.app.ink.PageSize
+import com.tom_roush.pdfbox.cos.COSString
 import com.notesplus.app.ink.Stroke
 import com.notesplus.app.ink.ToolType
 import com.notesplus.app.util.Files
@@ -52,10 +56,26 @@ class PdfExporter(private val context: Context, private val repo: NoteRepository
             // Make sure we never stack layers: strip any previous NotesPlus layer first.
             stripLayerIn(doc)
             val group = ensureLayerGroup(doc)
-            for (pageIdx in 0 until doc.numberOfPages) {
+            // Source pages first (indices are stable before any insertion).
+            val sourcePages = (0 until doc.numberOfPages).map { doc.getPage(it) }
+            for ((pageIdx, page) in sourcePages.withIndex()) {
                 val strokes = ink.page(pageIdx)?.strokes ?: continue
                 if (strokes.isEmpty()) continue
-                drawStrokes(doc, doc.getPage(pageIdx), strokes, group)
+                drawStrokes(doc, page, strokes, group)
+            }
+            // Then the user's inserted blank pages, in document order.
+            val lastInsertedAfter = HashMap<Int, PDPage>()
+            for (ins in ink.orderedInserts()) {
+                val page = PDPage(PDRectangle(ins.w, ins.h))
+                page.cosObject.setItem(INSERT_KEY, COSString(ins.id))
+                val anchorIndex = ins.after.coerceIn(-1, sourcePages.size - 1)
+                val prev = lastInsertedAfter[anchorIndex] ?: if (anchorIndex >= 0) sourcePages[anchorIndex] else null
+                if (prev != null) doc.pages.insertAfter(page, prev)
+                else if (sourcePages.isNotEmpty()) doc.pages.insertBefore(page, sourcePages[0])
+                else doc.addPage(page)
+                lastInsertedAfter[anchorIndex] = page
+                drawPaper(doc, page, ins)
+                if (ins.strokes.isNotEmpty()) drawStrokes(doc, page, ins.strokes, group)
             }
             doc.save(tmp)
         }
@@ -79,8 +99,34 @@ class PdfExporter(private val context: Context, private val repo: NoteRepository
         changed
     }
 
+    private fun drawPaper(doc: PDDocument, page: PDPage, ins: PageInsert) {
+        if (ins.paper == PaperStyle.PLAIN) return
+        val size = PageSize(ins.w, ins.h)
+        PDPageContentStream(doc, page, PDPageContentStream.AppendMode.APPEND, true, true).use { cs ->
+            cs.setStrokingColor(0.80f, 0.85f, 0.92f)
+            cs.setLineWidth(0.6f)
+            when (ins.paper) {
+                PaperStyle.RULED -> { var y = 60f; while (y < size.h - 20f) { cs.moveTo(30f, size.h - y); cs.lineTo(size.w - 30f, size.h - y); y += 28f }; cs.stroke() }
+                PaperStyle.GRID -> {
+                    var y = 0f; while (y < size.h) { cs.moveTo(0f, y); cs.lineTo(size.w, y); y += 20f }
+                    var x = 0f; while (x < size.w) { cs.moveTo(x, 0f); cs.lineTo(x, size.h); x += 20f }
+                    cs.stroke()
+                }
+                PaperStyle.DOTTED -> {
+                    cs.setNonStrokingColor(0.70f, 0.75f, 0.85f)
+                    var y = 20f; while (y < size.h) { var x = 20f; while (x < size.w) { cs.addRect(x - 0.6f, size.h - y - 0.6f, 1.2f, 1.2f); x += 20f }; y += 20f }
+                    cs.fill()
+                }
+                PaperStyle.PLAIN -> Unit
+            }
+        }
+    }
+
     private fun stripLayerIn(doc: PDDocument): Boolean {
         var removedAny = false
+        // Pages NotesPlus inserted are removed wholesale.
+        val inserted = doc.pages.filter { it.cosObject.getDictionaryObject(INSERT_KEY) != null }
+        inserted.forEach { doc.pages.remove(it); removedAny = true }
         for (page in doc.pages) {
             val contents = page.cosObject.getDictionaryObject(COSName.CONTENTS) ?: continue
             val array: COSArray = when (contents) {
@@ -190,6 +236,7 @@ class PdfExporter(private val context: Context, private val repo: NoteRepository
 
     companion object {
         val LAYER_KEY: COSName = COSName.getPDFName("NotesPlusLayer")
+        val INSERT_KEY: COSName = COSName.getPDFName("NotesPlusInsert")
         const val LAYER_NAME = "NotesPlus annotations"
     }
 }

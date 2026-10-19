@@ -4,7 +4,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.notesplus.app.NotesPlusApp
 import com.notesplus.app.data.db.NoteEntity
+import com.notesplus.app.editor.CompositePageSource
 import com.notesplus.app.editor.DocumentView
+import com.notesplus.app.ink.PaperStyle
+import com.notesplus.app.data.DEFAULT_HIGHLIGHTER_PALETTE
+import com.notesplus.app.data.DEFAULT_PEN_PALETTE
 import com.notesplus.app.editor.PageSource
 import com.notesplus.app.editor.PdfPageSource
 import com.notesplus.app.ink.InkDocument
@@ -53,6 +57,9 @@ data class EditorState(
     val motionPrediction: Boolean = true,
     val straightHighlighter: Boolean = true,
     val recentColors: List<Int> = emptyList(),
+    val penPalette: List<Int> = DEFAULT_PEN_PALETTE,
+    val highlighterPalette: List<Int> = DEFAULT_HIGHLIGHTER_PALETTE,
+    val insertPaper: PaperStyle = PaperStyle.RULED,
     val showPages: Boolean = false
 )
 
@@ -98,6 +105,7 @@ class EditorViewModel(private val app: NotesPlusApp, private val noteId: String)
                     eraserRadius = s.eraserRadius, fingerDraws = s.fingerDrawing, stylusButtonErases = s.stylusButtonErases,
                     autoShape = s.autoShape, railOnRight = s.railOnRight, motionPrediction = s.motionPrediction,
                     straightHighlighter = s.straightHighlighter, recentColors = s.recentColors,
+                    penPalette = s.penPalette, highlighterPalette = s.highlighterPalette, insertPaper = s.insertPaper,
                     shapeKind = ShapeKind.entries.getOrElse(s.lastShape) { ShapeKind.LINE }
                 )
             }
@@ -108,7 +116,9 @@ class EditorViewModel(private val app: NotesPlusApp, private val noteId: String)
         try {
             val note = repo.get(noteId) ?: run { _state.update { it.copy(loading = false, error = "Note not found") }; return }
             val ink = repo.loadInk(noteId)
-            val source: PageSource = withContext(Dispatchers.IO) { PdfPageSource(repo.pdfFile(noteId)).also { it.preloadSizes() } }
+            val source: PageSource = withContext(Dispatchers.IO) {
+                CompositePageSource(PdfPageSource(repo.pdfFile(noteId)).also { it.preloadSizes() }).also { it.setInserts(ink.orderedInserts()) }
+            }
             c.syncEngine.markOpen(noteId)
             repo.touchOpened(noteId)
             pageSource = source
@@ -162,6 +172,24 @@ class EditorViewModel(private val app: NotesPlusApp, private val noteId: String)
 
     fun setTool(t: DocumentView.Tool) = _state.update { it.copy(tool = t) }
 
+    /** Replaces one slot of the active palette and persists it. */
+    fun replacePaletteColor(highlighter: Boolean, index: Int, color: Int) {
+        val s = _state.value
+        val palette = (if (highlighter) s.highlighterPalette else s.penPalette).toMutableList()
+        if (index !in palette.indices) return
+        palette[index] = color
+        _state.update { if (highlighter) it.copy(highlighterPalette = palette, highlighterColor = color) else it.copy(penPalette = palette, penColor = color) }
+        viewModelScope.launch {
+            if (highlighter) { c.prefs.setHighlighterPalette(palette); c.prefs.setHighlighter(color, s.highlighterWidth) }
+            else { c.prefs.setPenPalette(palette); c.prefs.setPen(color, s.penWidth) }
+        }
+    }
+
+    fun resetPalette(highlighter: Boolean) {
+        _state.update { if (highlighter) it.copy(highlighterPalette = DEFAULT_HIGHLIGHTER_PALETTE) else it.copy(penPalette = DEFAULT_PEN_PALETTE) }
+        viewModelScope.launch { if (highlighter) c.prefs.setHighlighterPalette(DEFAULT_HIGHLIGHTER_PALETTE) else c.prefs.setPenPalette(DEFAULT_PEN_PALETTE) }
+    }
+
     /** Remembers a colour chosen in the picker so it shows under "Recent". */
     fun rememberColor(color: Int) {
         _state.update { it.copy(recentColors = (listOf(color) + it.recentColors.filter { c -> c != color }).take(12)) }
@@ -204,6 +232,9 @@ class EditorViewModel(private val app: NotesPlusApp, private val noteId: String)
     // ---------------------------------------------------------------- page navigator thumbnails
 
     private val thumbCache = LruCache<Int, Bitmap>(64)
+
+    /** Inserted pages shift logical indices, so thumbnails are re-rendered after a change. */
+    fun invalidatePageThumbnails() { thumbCache.evictAll() }
 
     /** Small raster of page [index] for the page navigator (page content only, no ink). */
     suspend fun pageThumbnail(index: Int, widthPx: Int = 220): Bitmap? {

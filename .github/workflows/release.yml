@@ -13,12 +13,14 @@ jobs:
   release:
     if: github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
-    env:
-      # Offset so CI builds always outrank the hand-built 1.0.0 (versionCode 1).
-      VERSION_CODE: ${{ 100 + github.run_number }}
-      VERSION_NAME: 1.0.${{ 100 + github.run_number }}
     steps:
       - uses: actions/checkout@v4
+      - name: Version numbers
+        # Offset so CI builds always outrank hand-built APKs (versionCode 1-2).
+        run: |
+          CODE=$((100 + ${{ github.run_number }}))
+          echo "VERSION_CODE=$CODE" >> "$GITHUB_ENV"
+          echo "VERSION_NAME=1.0.$CODE" >> "$GITHUB_ENV"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

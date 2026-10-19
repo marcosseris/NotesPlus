@@ -23,6 +23,9 @@ import android.widget.OverScroller
 import com.notesplus.app.ink.InkDocument
 import com.notesplus.app.ink.InkGeometry
 import com.notesplus.app.ink.InkMerge
+import com.notesplus.app.ink.PageInsert
+import com.notesplus.app.ink.PageKey
+import com.notesplus.app.ink.PaperStyle
 import com.notesplus.app.ink.ShapeBuilder
 import com.notesplus.app.ink.ShapeKind
 import com.notesplus.app.ink.ShapeRecognizer
@@ -193,6 +196,7 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
         this.source?.let { if (it !== source) runCatching { it.close() } }
         this.source = source
         this.ink = ink
+        (source as? CompositePageSource)?.setInserts(ink.orderedInserts())
         undo.clear()
         pathCache.clear()
         renderer = PageRenderer(source) { postInvalidateOnAnimation() }
@@ -210,16 +214,82 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
     fun setInk(doc: InkDocument) {
         val ids = HashSet<String>()
         doc.pages.forEach { p -> p.strokes.forEach { ids += it.id } }
+        doc.inserts.forEach { p -> p.strokes.forEach { ids += it.id } }
         pathCache.keys.retainAll(ids)
         ink = doc
+        syncInserts()
         invalidate()
+    }
+
+    /** Re-derives the logical page list from the ink document's inserted pages. */
+    private fun syncInserts() {
+        val composite = source as? CompositePageSource ?: return
+        if (composite.setInserts(ink.orderedInserts())) {
+            renderer?.invalidateAll()
+            relayout()
+            notifyViewport(force = true)
+            schedulePatches()
+        }
+    }
+
+    private fun keyOf(index: Int): PageKey = source?.pageKey(index) ?: PageKey.Source(index)
+
+    /** True when the page at [index] is one the user inserted. */
+    fun isInsertedPage(index: Int): Boolean = (source as? CompositePageSource)?.insertAt(index) != null
+
+    /**
+     * Inserts a blank page above or below the current page, same size as that page.
+     * Returns the new page's index.
+     */
+    fun insertBlankPage(above: Boolean, paper: PaperStyle): Int {
+        val composite = source as? CompositePageSource ?: return -1
+        finishStrokeIfAny()
+        val cur = currentPage()
+        val size = composite.pageSize(cur)
+        val ordered = ink.orderedInserts()
+        fun nextOrderAfter(p: Int) = (ordered.filter { it.after == p }.maxOfOrNull { it.order } ?: 0.0) + 1.0
+        val (after, order) = when (val k = composite.pageKey(cur)) {
+            is PageKey.Source -> if (above) (k.index - 1) to nextOrderAfter(k.index - 1) else k.index to nextOrderAfter(k.index)
+            is PageKey.Insert -> {
+                val ins = ink.insert(k.id)!!
+                val siblings = ordered.filter { it.after == ins.after }
+                val idx = siblings.indexOfFirst { it.id == ins.id }
+                val o = if (above) {
+                    val prev = siblings.getOrNull(idx - 1); if (prev != null) (prev.order + ins.order) / 2 else ins.order - 1.0
+                } else {
+                    val next = siblings.getOrNull(idx + 1); if (next != null) (ins.order + next.order) / 2 else ins.order + 1.0
+                }
+                ins.after to o
+            }
+        }
+        val insert = PageInsert(UUID.randomUUID().toString(), after, order, size.w, size.h, paper, System.currentTimeMillis())
+        ink = ink.addInsert(insert)
+        undo.record(UndoManager.Op.InsertPage(insert))
+        syncInserts()
+        emitInkChanged()
+        val newIndex = composite.indexOf(PageKey.Insert(insert.id))
+        if (newIndex >= 0) scrollToPage(newIndex)
+        return newIndex
+    }
+
+    /** Removes the inserted page at [index] (and its ink). No-op for PDF pages. */
+    fun removeInsertedPage(index: Int): Boolean {
+        val composite = source as? CompositePageSource ?: return false
+        val ins = composite.insertAt(index) ?: return false
+        finishStrokeIfAny()
+        ink = ink.removeInsert(ins.id)
+        ins.strokes.forEach { pathCache.remove(it.id) }
+        undo.record(UndoManager.Op.RemovePage(ins))
+        syncInserts()
+        emitInkChanged()
+        return true
     }
 
     /** Merges a document written by the sync engine into what is on screen. */
     fun mergeExternal(fileDoc: InkDocument) = setInk(InkMerge.merge(ink, fileDoc))
 
-    fun undo() { if (!undo.canUndo) return; finishStrokeIfAny(); ink = undo.undo(ink); emitInkChanged(); invalidate() }
-    fun redo() { if (!undo.canRedo) return; finishStrokeIfAny(); ink = undo.redo(ink); emitInkChanged(); invalidate() }
+    fun undo() { if (!undo.canUndo) return; finishStrokeIfAny(); ink = undo.undo(ink); syncInserts(); emitInkChanged(); invalidate() }
+    fun redo() { if (!undo.canRedo) return; finishStrokeIfAny(); ink = undo.redo(ink); syncInserts(); emitInkChanged(); invalidate() }
 
     val pageCount: Int get() = source?.pageCount ?: 0
 
@@ -452,14 +522,14 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
             }
 
             // Ink.
-            val page = ink.page(i)
+            val strokes = ink.strokesAt(keyOf(i))
             val hasCurrent = drawingPointerId != -1 && drawingPage == i && !erasing && !strokeConsumed && (curPts.size >= 3 || shapeStart != null)
-            if ((page != null && page.strokes.isNotEmpty()) || hasCurrent) {
+            if (strokes.isNotEmpty() || hasCurrent) {
                 val save = canvas.save()
                 canvas.clipRect(sr)
                 canvas.translate(sr.left, sr.top)
                 canvas.scale(scale, scale)
-                page?.strokes?.forEach { drawStroke(canvas, it) }
+                strokes.forEach { drawStroke(canvas, it) }
                 if (hasCurrent) drawCurrentStroke(canvas)
                 canvas.restoreToCount(save)
             }
@@ -816,10 +886,11 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
         val result = ShapeRecognizer.recognize(pts) ?: return
         val strokes = result.polylines().map { toStroke(it) }
         if (strokes.isEmpty()) return
+        val key = keyOf(drawingPage)
         var doc = ink
-        strokes.forEach { doc = doc.addStroke(drawingPage, it) }
+        strokes.forEach { doc = doc.addStroke(key, it) }
         ink = doc
-        undo.record(UndoManager.Op.Add(drawingPage, strokes))
+        undo.record(UndoManager.Op.Add(key, strokes))
         strokeConsumed = true
         curPts.clear(); predictedPts = FloatArray(0)
         performHapticFeedback(
@@ -867,11 +938,11 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
     }
 
     private fun eraseAt(ax: Float, ay: Float, bx: Float, by: Float) {
-        val page = ink.page(drawingPage) ?: return
-        val hit = page.strokes.filter { InkGeometry.hitsSegment(it, ax, ay, bx, by, eraserRadius) }
+        val key = keyOf(drawingPage)
+        val hit = ink.strokesAt(key).filter { InkGeometry.hitsSegment(it, ax, ay, bx, by, eraserRadius) }
         if (hit.isEmpty()) return
         erasedThisGesture += hit
-        ink = ink.removeStrokes(drawingPage, hit.map { it.id })
+        ink = ink.removeStrokes(key, hit.map { it.id })
         hit.forEach { pathCache.remove(it.id) }
         invalidate()
     }
@@ -879,7 +950,7 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
     private fun finishStroke() {
         if (drawingPointerId == -1) return
         removeCallbacks(holdRunnable)
-        val page = drawingPage
+        val page = keyOf(drawingPage)
         val start = shapeStart
         if (strokeConsumed) {
             // Already committed by hold-to-snap.

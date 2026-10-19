@@ -76,6 +76,12 @@ class SettingsViewModel(private val app: NotesPlusApp) : ViewModel() {
     fun setRailOnRight(v: Boolean) = viewModelScope.launch { c.prefs.setRailOnRight(v) }
     fun setMotionPrediction(v: Boolean) = viewModelScope.launch { c.prefs.setMotionPrediction(v) }
     fun setStraightHighlighter(v: Boolean) = viewModelScope.launch { c.prefs.setStraightHighlighter(v) }
+    fun setInsertPaper(v: com.notesplus.app.ink.PaperStyle) = viewModelScope.launch { c.prefs.setInsertPaper(v) }
+    fun resetPalettes() = viewModelScope.launch {
+        c.prefs.setPenPalette(com.notesplus.app.data.DEFAULT_PEN_PALETTE)
+        c.prefs.setHighlighterPalette(com.notesplus.app.data.DEFAULT_HIGHLIGHTER_PALETTE)
+        _messages.tryEmit("Palettes reset to defaults")
+    }
 
     fun syncNow() = viewModelScope.launch {
         val r = c.syncEngine.sync(force = true)

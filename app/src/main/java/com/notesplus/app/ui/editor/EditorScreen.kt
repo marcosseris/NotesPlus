@@ -111,8 +111,8 @@ import com.notesplus.app.ink.ShapeKind
 import com.notesplus.app.cloud.SyncStatus
 import com.notesplus.app.ui.common.ColorPickerDialog
 import com.notesplus.app.ui.common.ColorSwatch
-import com.notesplus.app.ui.common.HIGHLIGHTER_PALETTE
-import com.notesplus.app.ui.common.PEN_PALETTE
+import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
+import androidx.compose.material.icons.filled.PlaylistRemove
 import com.notesplus.app.ui.common.appViewModel
 import com.notesplus.app.ui.common.shareFile
 
@@ -139,6 +139,8 @@ fun EditorScreen(noteId: String, onBack: () -> Unit) {
     var showJump by remember { mutableStateOf(false) }
     var showClearAll by remember { mutableStateOf(false) }
     var showColorPicker by remember { mutableStateOf(false) }
+    var editSlot by remember { mutableStateOf<Int?>(null) }
+    var currentIsInsert by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -199,8 +201,21 @@ fun EditorScreen(noteId: String, onBack: () -> Unit) {
                         }
                         SyncIndicator(state, onClick = { vm.syncNow() })
                         Box {
-                            IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, contentDescription = "More") }
+                            IconButton(onClick = { currentIsInsert = view?.isInsertedPage(state.currentPage) == true; menu = true }) { Icon(Icons.Default.MoreVert, contentDescription = "More") }
                             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                                DropdownMenuItem(
+                                    text = { Text("Insert blank page above") }, leadingIcon = { Icon(Icons.AutoMirrored.Filled.PlaylistAdd, null) },
+                                    onClick = { menu = false; view?.insertBlankPage(above = true, paper = state.insertPaper); vm.invalidatePageThumbnails() }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Insert blank page below") }, leadingIcon = { Icon(Icons.AutoMirrored.Filled.PlaylistAdd, null) },
+                                    onClick = { menu = false; view?.insertBlankPage(above = false, paper = state.insertPaper); vm.invalidatePageThumbnails() }
+                                )
+                                if (currentIsInsert) DropdownMenuItem(
+                                    text = { Text("Remove this inserted page") }, leadingIcon = { Icon(Icons.Default.PlaylistRemove, null) },
+                                    onClick = { menu = false; view?.removeInsertedPage(state.currentPage); vm.invalidatePageThumbnails() }
+                                )
+                                HorizontalDivider()
                                 DropdownMenuItem(text = { Text("Go to page…") }, onClick = { menu = false; showJump = true })
                                 DropdownMenuItem(text = { Text("Fit page") }, leadingIcon = { Icon(Icons.Default.FitScreen, null) }, onClick = { menu = false; view?.fitPage() })
                                 DropdownMenuItem(text = { Text("Fit width") }, onClick = { menu = false; view?.fitWidth() })
@@ -231,7 +246,7 @@ fun EditorScreen(noteId: String, onBack: () -> Unit) {
                     AnimatedVisibility(state.showPages && !state.loading, enter = slideInVertically { it } + fadeIn(), exit = slideOutVertically { it } + fadeOut()) {
                         PagesStrip(vm, state, onPage = { view?.scrollToPage(it) })
                     }
-                    BottomToolBar(state, selectTool, selectColor, onShape = vm::setShapeKind, onMoreColors = { showColorPicker = true })
+                    BottomToolBar(state, selectTool, selectColor, onShape = vm::setShapeKind, onMoreColors = { editSlot = null; showColorPicker = true }, onEditSlot = { editSlot = it; showColorPicker = true })
                 }
             }
         ) { padding ->
@@ -272,7 +287,7 @@ fun EditorScreen(noteId: String, onBack: () -> Unit) {
                             val railAlign = if (state.railOnRight) Alignment.CenterEnd else Alignment.CenterStart
                             val panelAlign = if (state.railOnRight) Alignment.CenterStart else Alignment.CenterEnd
                             Box(Modifier.align(railAlign).padding(10.dp)) {
-                                FloatingToolRail(state, view, selectTool, selectColor, selectWidth, onShape = vm::setShapeKind, onMoreColors = { showColorPicker = true })
+                                FloatingToolRail(state, view, selectTool, selectColor, selectWidth, onShape = vm::setShapeKind, onMoreColors = { editSlot = null; showColorPicker = true }, onEditSlot = { editSlot = it; showColorPicker = true })
                             }
                             PagesPanel(vm, state, visible = state.showPages, fromRight = !state.railOnRight, onPage = { view?.scrollToPage(it) }, modifier = Modifier.align(panelAlign))
                         }
@@ -288,11 +303,14 @@ fun EditorScreen(noteId: String, onBack: () -> Unit) {
     if (showColorPicker) {
         ColorPickerDialog(
             title = if (isHl) "Highlighter colour" else "Pen colour",
-            initial = if (isHl) state.highlighterColor else state.penColor,
-            palette = if (isHl) HIGHLIGHTER_PALETTE else PEN_PALETTE,
+            initial = editSlot?.let { (if (isHl) state.highlighterPalette else state.penPalette).getOrNull(it) } ?: if (isHl) state.highlighterColor else state.penColor,
+            palette = if (isHl) state.highlighterPalette else state.penPalette,
             recent = state.recentColors,
             onPick = { c -> selectColor(c); vm.rememberColor(c); showColorPicker = false },
-            onDismiss = { showColorPicker = false }
+            onDismiss = { showColorPicker = false },
+            initialEditSlot = editSlot,
+            onReplaceSlot = { index, c -> vm.replacePaletteColor(isHl, index, c) },
+            onResetPalette = { vm.resetPalette(isHl) }
         )
     }
     if (showJump) {
@@ -396,10 +414,10 @@ private fun MoreColorsButton(onClick: () -> Unit) {
     ) { Icon(Icons.Default.Add, contentDescription = "More colours", modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
 }
 
-/** The colours shown inline: the first few of the palette plus the current colour if it is a custom one. */
-private fun quickColors(palette: List<Int>, current: Int): List<Int> {
-    val quick = palette.take(QUICK_COLORS)
-    return if (current in quick) quick else listOf(current) + quick.dropLast(1)
+/** The palette slots shown inline (index to colour), plus the current colour when it is not in the palette. */
+private fun quickColors(palette: List<Int>, current: Int): List<Pair<Int, Int>> {
+    val quick = palette.take(QUICK_COLORS).mapIndexed { i, c -> i to c }
+    return if (quick.any { it.second == current } || palette.indexOf(current) >= 0) quick else listOf(-1 to current) + quick.dropLast(1)
 }
 
 /** Floating pill rail for tablets: everything reachable with the pen without leaving the page. */
@@ -407,7 +425,7 @@ private fun quickColors(palette: List<Int>, current: Int): List<Int> {
 private fun FloatingToolRail(
     state: EditorState, view: DocumentView?,
     onTool: (DocumentView.Tool) -> Unit, onColor: (Int) -> Unit, onWidth: (Float) -> Unit,
-    onShape: (ShapeKind) -> Unit, onMoreColors: () -> Unit
+    onShape: (ShapeKind) -> Unit, onMoreColors: () -> Unit, onEditSlot: (Int) -> Unit
 ) {
     Surface(shape = RoundedCornerShape(26.dp), tonalElevation = 4.dp, shadowElevation = 8.dp, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
         Column(
@@ -428,7 +446,9 @@ private fun FloatingToolRail(
                     RailDivider()
                     val hl = state.tool == DocumentView.Tool.HIGHLIGHTER
                     val selected = if (hl) state.highlighterColor else state.penColor
-                    quickColors(if (hl) HIGHLIGHTER_PALETTE else PEN_PALETTE, selected).forEach { c -> ColorSwatch(c, c == selected) { onColor(c) } }
+                    quickColors(if (hl) state.highlighterPalette else state.penPalette, selected).forEach { (i, c) ->
+                        ColorSwatch(c, c == selected, onLongClick = if (i >= 0) ({ onEditSlot(i) }) else null) { onColor(c) }
+                    }
                     MoreColorsButton(onMoreColors)
                     RailDivider()
                     val widths = if (hl) HL_WIDTHS else PEN_WIDTHS
@@ -448,7 +468,7 @@ private fun RailDivider() = HorizontalDivider(Modifier.padding(horizontal = 14.d
 @Composable
 private fun BottomToolBar(
     state: EditorState, onTool: (DocumentView.Tool) -> Unit, onColor: (Int) -> Unit,
-    onShape: (ShapeKind) -> Unit, onMoreColors: () -> Unit
+    onShape: (ShapeKind) -> Unit, onMoreColors: () -> Unit, onEditSlot: (Int) -> Unit
 ) {
     Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
         Row(
@@ -464,7 +484,9 @@ private fun BottomToolBar(
             if (state.tool == DocumentView.Tool.PEN || hl || state.tool == DocumentView.Tool.SHAPE) {
                 Spacer(Modifier.width(6.dp))
                 val selected = if (hl) state.highlighterColor else state.penColor
-                quickColors(if (hl) HIGHLIGHTER_PALETTE else PEN_PALETTE, selected).forEach { c -> ColorSwatch(c, c == selected) { onColor(c) } }
+                quickColors(if (hl) state.highlighterPalette else state.penPalette, selected).forEach { (i, c) ->
+                    ColorSwatch(c, c == selected, onLongClick = if (i >= 0) ({ onEditSlot(i) }) else null) { onColor(c) }
+                }
                 MoreColorsButton(onMoreColors)
             }
         }
