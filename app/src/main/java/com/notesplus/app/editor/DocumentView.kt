@@ -141,7 +141,6 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
     private val erasedThisGesture = ArrayList<Stroke>()
     private var lastStylusTime = 0L
     private var eraserCursor: FloatArray? = null  // screen x, y, radius px
-    private var penCursor: FloatArray? = null     // screen x, y (stylus hovering)
 
     // Shape tool drag and hold-to-snap.
     private var shapeStart: FloatArray? = null    // page coords
@@ -535,7 +534,6 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
             }
         }
         eraserCursor?.let { c -> canvas.drawCircle(c[0], c[1], c[2], eraserFill); canvas.drawCircle(c[0], c[1], c[2], eraserPaint) }
-        penCursor?.let { c -> canvas.drawCircle(c[0], c[1], 2.5f * density, eraserPaint) }
         if (anyPatchMissing && src.isPdf && !scaling && !gestureActive && scroller.isFinished) schedulePatches()
     }
 
@@ -715,15 +713,12 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
             lastStylusTime = SystemClock.uptimeMillis()
             val erase = tool == Tool.ERASER || tt == MotionEvent.TOOL_TYPE_ERASER ||
                 (stylusButtonErases && (ev.buttonState and MotionEvent.BUTTON_STYLUS_PRIMARY) != 0)
-            if (ev.actionMasked == MotionEvent.ACTION_HOVER_EXIT) {
-                eraserCursor = null; penCursor = null; invalidate()
-            } else if (erase) {
-                penCursor = null
+            if (erase && ev.actionMasked != MotionEvent.ACTION_HOVER_EXIT) {
                 eraserCursor = floatArrayOf(ev.x, ev.y, eraserRadius * baseScale * zoom)
                 invalidate()
-            } else {
+            } else if (eraserCursor != null) {
+                // No hover dot for the pen: it should feel like writing on paper.
                 eraserCursor = null
-                penCursor = floatArrayOf(ev.x, ev.y)
                 invalidate()
             }
             return true
@@ -828,7 +823,6 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
         curPts.clear()
         predictedPts = FloatArray(0)
         shapeStart = null; shapeEnd = null
-        penCursor = null
         if (!erase) {
             drawingMode = if (tool == Tool.HIGHLIGHTER) ToolType.HIGHLIGHTER else ToolType.PEN
             curColor = if (drawingMode == ToolType.HIGHLIGHTER) highlighterColor else penColor
