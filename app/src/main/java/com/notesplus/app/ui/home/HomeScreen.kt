@@ -1,6 +1,17 @@
 package com.notesplus.app.ui.home
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material.icons.automirrored.filled.NoteAdd
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.UploadFile
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SmallFloatingActionButton
+import androidx.compose.material3.TextButton
+import com.notesplus.app.ink.PaperStyle
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -112,6 +123,9 @@ fun HomeScreen(onOpenNote: (String) -> Unit, onOpenSettings: () -> Unit) {
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
     var tab by rememberSaveable { mutableStateOf(Tab.BROWSE) }
+    var fabOpen by remember { mutableStateOf(false) }
+    var showBlankDialog by remember { mutableStateOf(false) }
+    val pickPdf = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.uploadFromDevice(uri) }
 
     LaunchedEffect(Unit) {
         vm.events.collect { ev ->
@@ -127,6 +141,10 @@ fun HomeScreen(onOpenNote: (String) -> Unit, onOpenSettings: () -> Unit) {
         }
     }
     BackHandler(enabled = tab == Tab.BROWSE && browse.location?.folderId != null) { vm.up() }
+    if (showBlankDialog) BlankPdfDialog(onDismiss = { showBlankDialog = false }) { name, pages, paper ->
+        showBlankDialog = false
+        vm.createBlankPdf(name, pages, paper)
+    }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide = maxWidth >= 720.dp
@@ -163,6 +181,17 @@ fun HomeScreen(onOpenNote: (String) -> Unit, onOpenSettings: () -> Unit) {
                 )
             },
             snackbarHost = { SnackbarHost(snackbar) },
+            floatingActionButton = {
+                if (tab == Tab.BROWSE && browse.canAddHere && browse.working == null) {
+                    Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        if (fabOpen) {
+                            FabRow("Upload PDF from device", Icons.Default.UploadFile) { fabOpen = false; pickPdf.launch(arrayOf("application/pdf")) }
+                            FabRow("New blank PDF", Icons.AutoMirrored.Filled.NoteAdd) { fabOpen = false; showBlankDialog = true }
+                        }
+                        ExtendedFloatingActionButton(onClick = { fabOpen = !fabOpen }, icon = { Icon(Icons.Default.Add, null) }, text = { Text(if (fabOpen) "Close" else "Add PDF") })
+                    }
+                }
+            },
             bottomBar = {
                 if (!wide) NavigationBar {
                     NavigationBarItem(selected = tab == Tab.BROWSE, onClick = { tab = Tab.BROWSE }, icon = { Icon(Icons.Default.Cloud, null) }, label = { Text("Browse") })
@@ -187,6 +216,41 @@ fun HomeScreen(onOpenNote: (String) -> Unit, onOpenSettings: () -> Unit) {
     }
 }
 
+@Composable
+private fun FabRow(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Surface(shape = RoundedCornerShape(10.dp), tonalElevation = 3.dp, shadowElevation = 3.dp) {
+            Text(label, Modifier.padding(horizontal = 12.dp, vertical = 6.dp), style = MaterialTheme.typography.labelLarge)
+        }
+        Spacer(Modifier.width(12.dp))
+        SmallFloatingActionButton(onClick = onClick) { Icon(icon, contentDescription = label) }
+    }
+}
+
+@Composable
+private fun BlankPdfDialog(onDismiss: () -> Unit, onCreate: (String, Int, PaperStyle) -> Unit) {
+    var title by remember { mutableStateOf("") }
+    var pages by remember { mutableStateOf("5") }
+    var paper by remember { mutableStateOf(PaperStyle.RULED) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("New blank PDF") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(value = title, onValueChange = { title = it }, singleLine = true, label = { Text("Name") }, placeholder = { Text("Lecture notes") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = pages, onValueChange = { pages = it.filter(Char::isDigit).take(3) }, singleLine = true, label = { Text("Pages") }, modifier = Modifier.fillMaxWidth())
+                Text("Paper", style = MaterialTheme.typography.labelLarge)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PaperStyle.entries.forEach { p -> FilterChip(selected = paper == p, onClick = { paper = p }, label = { Text(p.name.lowercase().replaceFirstChar { it.uppercase() }) }) }
+                }
+                Text("A4 pages, saved to the folder you're viewing. You can insert more pages later.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        },
+        confirmButton = { TextButton(onClick = { onCreate(title.ifBlank { "Notes" }, pages.toIntOrNull()?.coerceIn(1, 200) ?: 5, paper) }) { Text("Create") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
 // --------------------------------------------------------------------------- browse
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -195,6 +259,10 @@ private fun BrowsePane(state: BrowseState, vm: HomeViewModel, wide: Boolean, onO
     val context = LocalContext.current
     val signedIn = Provider.entries.filter { state.signedIn[it] is AuthState.SignedIn }
     Column(Modifier.fillMaxSize()) {
+        if (state.working != null) {
+            LinearProgressIndicator(Modifier.fillMaxWidth())
+            Text(state.working, Modifier.padding(horizontal = 16.dp, vertical = 6.dp), style = MaterialTheme.typography.bodyMedium)
+        }
         if (signedIn.size > 1 || (signedIn.size == 1 && state.location != null)) {
             Row(Modifier.padding(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 signedIn.forEach { p ->

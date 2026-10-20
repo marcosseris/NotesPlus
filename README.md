@@ -7,6 +7,8 @@ show up on your computer too.
 * **Drive browser** – sign in to OneDrive and/or Google Drive, browse folders (cached, so it
   is instant and works offline), open any PDF. Google Drive shows My Drive, Shared with me
   and Shared drives.
+* **Add PDFs** – upload a PDF from the device or create a blank one (ruled, grid, dotted or
+  plain) straight into the folder you're browsing; it opens ready to write on.
 * **PowerPoint and Word too** – `.pptx`, `.ppt`, `.docx`, `.doc` (and Google Slides / Docs) are
   converted to PDF by the drive itself when you open them, then annotated like any PDF. Their
   annotations are published as a sibling `<name>.annotated.pdf` since ink cannot be written
