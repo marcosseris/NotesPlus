@@ -113,6 +113,7 @@ fun SettingsScreen(onBack: () -> Unit) {
 
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             Section("Pen & touch")
+            SwitchRow("Palm guard", "One finger never moves the page or draws; scroll and zoom with two fingers. Large contacts and touches near the pen are ignored either way.", ui.settings.palmGuard, vm::setPalmGuard)
             SwitchRow("Draw with finger", "When off, fingers only scroll and zoom (recommended with a stylus)", ui.settings.fingerDrawing, vm::setFingerDrawing)
             SwitchRow("Stylus button erases", "Hold the pen's side button to erase", ui.settings.stylusButtonErases, vm::setStylusButtonErases)
             SwitchRow("Snap shapes when you pause", "Hold the pen still at the end of a stroke to turn it into a straight line, rectangle, circle or triangle", ui.settings.autoShape, vm::setAutoShape)

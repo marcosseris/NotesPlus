@@ -55,3 +55,22 @@ class UndoManagerPageTest {
         assertFalse(doc.orderedInserts()[0].id == "p") // re-added under a fresh id
     }
 }
+
+class UndoManagerMoveTest {
+    private fun stroke(id: String, x: Float) = com.notesplus.app.ink.Stroke(id, com.notesplus.app.ink.ToolType.PEN, -1, 2f, 0L, floatArrayOf(x, 0f, 0.5f))
+
+    @Test
+    fun `undo and redo a lasso move`() {
+        val u = UndoManager()
+        val key = PageKey.Source(0)
+        val old = listOf(stroke("a", 0f))
+        val moved = listOf(stroke("b", 10f))
+        var doc = InkDocument().addStroke(key, moved[0])   // state after the move
+        u.record(UndoManager.Op.Replace(key, old, moved))
+        doc = u.undo(doc)
+        assertEquals(listOf(0f), doc.strokesAt(key).map { it.x(0) })
+        doc = u.redo(doc)
+        assertEquals(listOf(10f), doc.strokesAt(key).map { it.x(0) })
+        assertEquals(1, doc.strokeCount())
+    }
+}

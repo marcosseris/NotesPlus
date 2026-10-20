@@ -71,6 +71,7 @@ class SettingsViewModel(private val app: NotesPlusApp) : ViewModel() {
     fun setMetered(v: Boolean) = viewModelScope.launch { c.prefs.setSyncOnMetered(v); c.syncScheduler.ensurePeriodic() }
     fun setWriteBack(v: WriteBackMode) = viewModelScope.launch { c.prefs.setWriteBack(v) }
     fun setFingerDrawing(v: Boolean) = viewModelScope.launch { c.prefs.setFingerDrawing(v) }
+    fun setPalmGuard(v: Boolean) = viewModelScope.launch { c.prefs.setPalmGuard(v) }
     fun setStylusButtonErases(v: Boolean) = viewModelScope.launch { c.prefs.setStylusButtonErases(v) }
     fun setAutoShape(v: Boolean) = viewModelScope.launch { c.prefs.setAutoShape(v) }
     fun setRailOnRight(v: Boolean) = viewModelScope.launch { c.prefs.setRailOnRight(v) }

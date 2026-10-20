@@ -18,6 +18,11 @@ show up on your computer too.
   platform motion prediction so ink keeps up with the pen tip.
 * **Colours** – 16 pen inks and 10 highlighter colours on the rail, plus a full colour picker
   with recent colours.
+* **Lasso** – circle ink to select it, drag to move it, copy / cut / paste (also between PDFs)
+  or delete it; Ctrl+C / X / V and Delete work with a keyboard.
+* **Palm rejection** – contacts larger than a fingertip, touches while the pen is near and
+  touches Android flags as palms are ignored; a palm that scrolled the page just before the pen
+  landed is undone. The palm guard (on by default) makes one finger inert; scroll with two.
 * **Shapes** – line, arrow, rectangle, ellipse, triangle tools, and *hold-to-snap*: pause the pen
   at the end of a rough stroke and it becomes a clean shape.
 * **Annotations you can always edit** – strokes live in a small `<name>.pdf.ink.json` inside a

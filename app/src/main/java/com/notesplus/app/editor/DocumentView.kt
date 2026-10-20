@@ -52,7 +52,7 @@ import kotlin.math.min
  */
 class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null) : View(context, attrs) {
 
-    enum class Tool { PEN, HIGHLIGHTER, ERASER, SHAPE, PAN }
+    enum class Tool { PEN, HIGHLIGHTER, ERASER, SHAPE, LASSO, PAN }
 
     interface Listener {
         fun onInkChanged(doc: InkDocument, canUndo: Boolean, canRedo: Boolean)
@@ -61,13 +61,18 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
         fun onToolShortcut(tool: Tool) {}
         /** A hand-drawn stroke was snapped to a shape (for a small toast / haptic in the host). */
         fun onShapeSnapped() {}
+        /** Lasso selection or clipboard changed. */
+        fun onSelectionChanged(selected: Int, canPaste: Boolean) {}
     }
 
     var listener: Listener? = null
 
     // ----------------------------------------------------------------- settings
     var tool: Tool = Tool.PEN
-        set(value) { field = value; if (value != Tool.ERASER) eraserCursor = null; invalidate() }
+        set(value) {
+            if (field == Tool.LASSO && value != Tool.LASSO) clearSelection()
+            field = value; if (value != Tool.ERASER) eraserCursor = null; invalidate()
+        }
     var penColor: Int = 0xFF1C1C1E.toInt()
     var penWidth: Float = 2.2f
     var highlighterColor: Int = 0xFFFFE627.toInt()
@@ -76,6 +81,11 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
     var eraserRadius: Float = 10f
     var fingerDraws: Boolean = false
     var stylusButtonErases: Boolean = true
+    /**
+     * Palm guard: a single finger does nothing on the page (no scroll, no ink); scrolling and
+     * zooming take two fingers. Resting palms almost always start as one large contact.
+     */
+    var palmGuard: Boolean = true
     /** Shape drawn by the SHAPE tool. */
     var shapeKind: ShapeKind = ShapeKind.LINE
     /** Pause the pen at the end of a stroke to turn it into a clean line / shape. */
@@ -149,6 +159,31 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
     private var strokeConsumed = false            // stroke already committed by a snap; ignore until up
     private var lastMoveTime = 0L
     private val holdRunnable = Runnable { trySnapCurrentStroke() }
+
+    // Lasso selection.
+    private var lassoing = false
+    private var moving = false
+    private var selPage = -1
+    private var selIds: Set<String> = emptySet()
+    private var selBounds: RectF? = null          // page coords
+    private var moveStartX = 0f
+    private var moveStartY = 0f
+    private var moveDx = 0f
+    private var moveDy = 0f
+    private val selPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; color = 0xFF3F51B5.toInt()
+        strokeWidth = 1.5f * resources.displayMetrics.density
+        pathEffect = android.graphics.DashPathEffect(floatArrayOf(8f * resources.displayMetrics.density, 5f * resources.displayMetrics.density), 0f)
+    }
+    private val selFill = Paint().apply { style = Paint.Style.FILL; color = 0x143F51B5 }
+
+    // Palm rejection.
+    private val palmPointers = HashSet<Int>()
+    /** Contacts wider than this are palms, not fingertips (about 13 mm). */
+    private val palmMajorPx = 13f / 25.4f * resources.displayMetrics.xdpi
+    private var gestureStartOffX = 0f
+    private var gestureStartOffY = 0f
+    private var gestureStartTime = 0L
     private var predictor: MotionEventPredictor? = null
     private var predictedPts = FloatArray(0)
 
@@ -287,8 +322,8 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
     /** Merges a document written by the sync engine into what is on screen. */
     fun mergeExternal(fileDoc: InkDocument) = setInk(InkMerge.merge(ink, fileDoc))
 
-    fun undo() { if (!undo.canUndo) return; finishStrokeIfAny(); ink = undo.undo(ink); syncInserts(); emitInkChanged(); invalidate() }
-    fun redo() { if (!undo.canRedo) return; finishStrokeIfAny(); ink = undo.redo(ink); syncInserts(); emitInkChanged(); invalidate() }
+    fun undo() { if (!undo.canUndo) return; finishStrokeIfAny(); clearSelection(); ink = undo.undo(ink); syncInserts(); emitInkChanged(); invalidate() }
+    fun redo() { if (!undo.canRedo) return; finishStrokeIfAny(); clearSelection(); ink = undo.redo(ink); syncInserts(); emitInkChanged(); invalidate() }
 
     val pageCount: Int get() = source?.pageCount ?: 0
 
@@ -522,17 +557,22 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
 
             // Ink.
             val strokes = ink.strokesAt(keyOf(i))
-            val hasCurrent = drawingPointerId != -1 && drawingPage == i && !erasing && !strokeConsumed && (curPts.size >= 3 || shapeStart != null)
+            val hasCurrent = drawingPointerId != -1 && drawingPage == i && !erasing && !strokeConsumed && !lassoing && !moving && (curPts.size >= 3 || shapeStart != null)
             if (strokes.isNotEmpty() || hasCurrent) {
                 val save = canvas.save()
                 canvas.clipRect(sr)
                 canvas.translate(sr.left, sr.top)
                 canvas.scale(scale, scale)
-                strokes.forEach { drawStroke(canvas, it) }
+                if (i == selPage && (moveDx != 0f || moveDy != 0f)) {
+                    strokes.forEach { if (it.id !in selIds) drawStroke(canvas, it) }
+                    canvas.translate(moveDx, moveDy)
+                    strokes.forEach { if (it.id in selIds) drawStroke(canvas, it) }
+                } else strokes.forEach { drawStroke(canvas, it) }
                 if (hasCurrent) drawCurrentStroke(canvas)
                 canvas.restoreToCount(save)
             }
         }
+        drawLassoOverlay(canvas, scale)
         eraserCursor?.let { c -> canvas.drawCircle(c[0], c[1], c[2], eraserFill); canvas.drawCircle(c[0], c[1], c[2], eraserPaint) }
         if (anyPatchMissing && src.isPdf && !scaling && !gestureActive && scroller.isFinished) schedulePatches()
     }
@@ -617,6 +657,8 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
                 if (stylus) {
                     lastStylusTime = now
                     if (drawingPointerId != -1) return true
+                    // A palm that landed just before the pen may have scrolled the page: undo that.
+                    if (gestureActive && now - gestureStartTime < 2_000L) revertAccidentalScroll()
                     cancelGesture()
                     if (tool == Tool.PAN) { startGesture(ev); return true }
                     val erase = toolType == MotionEvent.TOOL_TYPE_ERASER ||
@@ -626,20 +668,38 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
                     return true
                 }
                 // Finger.
-                if (drawingPointerId != -1 && drawingIsStylus) return true          // palm while writing
-                if (now - lastStylusTime < PALM_WINDOW_MS && !fingerDraws) return true // palm just after writing
-                if (fingerDraws && tool != Tool.PAN && ev.pointerCount == 1 && drawingPointerId == -1) {
+                val pid = ev.getPointerId(idx)
+                if (looksLikePalm(ev, idx)) { palmPointers += pid; return true }   // too large for a fingertip
+                if (drawingPointerId != -1 && drawingIsStylus) { palmPointers += pid; return true } // palm while writing
+                if (now - lastStylusTime < PALM_WINDOW_MS && !fingerDraws) { palmPointers += pid; return true } // pen is near
+                // Drag an existing lasso selection with a finger.
+                if (tool == Tool.LASSO && selIds.isNotEmpty() && validFingers(ev) == 1 && drawingPointerId == -1 && insideSelection(ev.getX(idx), ev.getY(idx))) {
+                    beginStroke(ev, idx, erase = false, isStylus = false)
+                    return true
+                }
+                if (fingerDraws && tool != Tool.PAN && validFingers(ev) == 1 && drawingPointerId == -1) {
                     beginStroke(ev, idx, tool == Tool.ERASER, isStylus = false)
                     return true
                 }
                 if (drawingPointerId != -1 && !drawingIsStylus) cancelStroke()      // second finger: it's a gesture
-                startGesture(ev)
+                // With the palm guard, one finger alone never moves the page.
+                if (palmGuard && !fingerDraws && tool != Tool.PAN && validFingers(ev) < 2) return true
+                if (!gestureActive) startGesture(ev) else { val (fx, fy) = fingerFocus(ev, -1); lastFocusX = fx; lastFocusY = fy; scaleDetector.onTouchEvent(ev) }
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
                 if (drawingPointerId != -1) {
                     val pi = ev.findPointerIndex(drawingPointerId)
-                    if (pi >= 0 && !strokeConsumed) {
+                    if (pi >= 0 && (lassoing || moving)) {
+                        if (moving) updateMove(ev.getX(pi), ev.getY(pi))
+                        else for (h in 0..ev.historySize) {
+                            val x = if (h < ev.historySize) ev.getHistoricalX(pi, h) else ev.getX(pi)
+                            val y = if (h < ev.historySize) ev.getHistoricalY(pi, h) else ev.getY(pi)
+                            screenToPage(drawingPage, x, y, tmpPt); curPts.add(tmpPt[0], tmpPt[1], 0.5f)
+                        }
+                        if (drawingIsStylus) lastStylusTime = now
+                        invalidate()
+                    } else if (pi >= 0 && !strokeConsumed) {
                         if (shapeStart != null) {
                             shapeConstrain = (ev.buttonState and MotionEvent.BUTTON_STYLUS_PRIMARY) != 0 || (ev.metaState and KeyEvent.META_SHIFT_ON) != 0
                             updateShapeEnd(ev.getX(pi), ev.getY(pi))
@@ -666,6 +726,13 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
                 val pid = ev.getPointerId(idx)
+                val canceled = android.os.Build.VERSION.SDK_INT >= 33 && (ev.flags and MotionEvent.FLAG_CANCELED) != 0
+                if (action == MotionEvent.ACTION_UP) palmPointers.clear() else palmPointers -= pid
+                if (canceled) {
+                    // The system decided this contact was a palm.
+                    if (pid == drawingPointerId && !drawingIsStylus) { cancelStroke(); return true }
+                    if (gestureActive) { revertAccidentalScroll(); cancelGesture(); return true }
+                }
                 if (pid == drawingPointerId) {
                     val pi = idx
                     if (!strokeConsumed) {
@@ -683,7 +750,8 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
                     scaleDetector.onTouchEvent(ev)
                     tapDetector.onTouchEvent(ev)
                     velocity?.addMovement(ev)
-                    if (action == MotionEvent.ACTION_UP || ev.pointerCount - 1 == 0) {
+                    if (action == MotionEvent.ACTION_UP || ev.pointerCount - 1 == 0 ||
+                        (palmGuard && !fingerDraws && tool != Tool.PAN && validFingers(ev, excludeIndex = idx) < 2)) {
                         endGestureWithFling()
                     } else {
                         val (fx, fy) = fingerFocus(ev, excludeIndex = idx)
@@ -694,8 +762,11 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
-                if (drawingPointerId != -1) finishStroke()
+                val canceled = android.os.Build.VERSION.SDK_INT >= 33 && (ev.flags and MotionEvent.FLAG_CANCELED) != 0
+                if (drawingPointerId != -1) { if (drawingIsStylus && !canceled) finishStroke() else cancelStroke() }
+                if (canceled && gestureActive) revertAccidentalScroll()
                 cancelGesture()
+                palmPointers.clear()
                 return true
             }
         }
@@ -732,6 +803,11 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
             ctrl && keyCode == KeyEvent.KEYCODE_Z && event.isShiftPressed -> { redo(); return true }
             ctrl && keyCode == KeyEvent.KEYCODE_Z -> { undo(); return true }
             ctrl && keyCode == KeyEvent.KEYCODE_Y -> { redo(); return true }
+            ctrl && keyCode == KeyEvent.KEYCODE_C -> { copySelection(); return true }
+            ctrl && keyCode == KeyEvent.KEYCODE_X -> { cutSelection(); return true }
+            ctrl && keyCode == KeyEvent.KEYCODE_V -> { paste(); return true }
+            !ctrl && (keyCode == KeyEvent.KEYCODE_DEL || keyCode == KeyEvent.KEYCODE_FORWARD_DEL) && selIds.isNotEmpty() -> { deleteSelection(); return true }
+            !ctrl && keyCode == KeyEvent.KEYCODE_L -> { listener?.onToolShortcut(Tool.LASSO); return true }
             ctrl && (keyCode == KeyEvent.KEYCODE_PLUS || keyCode == KeyEvent.KEYCODE_EQUALS) -> { zoomBy(1.2f, width / 2f, height / 2f); schedulePatches(); return true }
             ctrl && keyCode == KeyEvent.KEYCODE_MINUS -> { zoomBy(1 / 1.2f, width / 2f, height / 2f); schedulePatches(); return true }
             ctrl && keyCode == KeyEvent.KEYCODE_0 -> { fitPage(); return true }
@@ -764,6 +840,7 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
         var sx = 0f; var sy = 0f; var n = 0
         for (i in 0 until ev.pointerCount) {
             if (i == excludeIndex) continue
+            if (ev.getPointerId(i) in palmPointers) continue
             val tt = ev.getToolType(i)
             if (tt == MotionEvent.TOOL_TYPE_STYLUS || tt == MotionEvent.TOOL_TYPE_ERASER) {
                 if (tool != Tool.PAN) continue
@@ -773,8 +850,33 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
         return if (n == 0) lastFocusX to lastFocusY else (sx / n) to (sy / n)
     }
 
+    /** Fingertips currently down, excluding the pen and contacts judged to be palms. */
+    private fun validFingers(ev: MotionEvent, excludeIndex: Int = -1): Int {
+        var n = 0
+        for (i in 0 until ev.pointerCount) {
+            if (i == excludeIndex) continue
+            val tt = ev.getToolType(i)
+            if (tt == MotionEvent.TOOL_TYPE_STYLUS || tt == MotionEvent.TOOL_TYPE_ERASER) continue
+            if (ev.getPointerId(i) in palmPointers) continue
+            n++
+        }
+        return n
+    }
+
+    private fun looksLikePalm(ev: MotionEvent, i: Int): Boolean {
+        val major = ev.getTouchMajor(i)
+        return major > 0f && major > palmMajorPx
+    }
+
+    private fun revertAccidentalScroll() {
+        scroller.forceFinished(true)
+        offX = gestureStartOffX; offY = gestureStartOffY
+        clampOffsets(); invalidate(); postViewportNotify()
+    }
+
     private fun startGesture(ev: MotionEvent) {
         scroller.forceFinished(true)
+        gestureStartOffX = offX; gestureStartOffY = offY; gestureStartTime = SystemClock.uptimeMillis()
         gestureActive = true
         velocity?.recycle()
         velocity = VelocityTracker.obtain().also { it.addMovement(ev) }
@@ -830,6 +932,20 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
         }
         val p = FloatArray(2)
         screenToPage(page, ev.getX(idx), ev.getY(idx), p)
+        if (tool == Tool.LASSO && !erase) {
+            if (selIds.isNotEmpty() && page == selPage && insideSelection(ev.getX(idx), ev.getY(idx))) {
+                moving = true
+                screenToPageRaw(page, ev.getX(idx), ev.getY(idx), p)
+                moveStartX = p[0]; moveStartY = p[1]; moveDx = 0f; moveDy = 0f
+            } else {
+                clearSelection()
+                lassoing = true
+                curPts.add(p[0], p[1], 0.5f)
+            }
+            parent?.requestDisallowInterceptTouchEvent(true)
+            invalidate()
+            return true
+        }
         when {
             erase -> { lastEraseX = p[0]; lastEraseY = p[1]; eraseAt(p[0], p[1], p[0], p[1]); eraserCursor = floatArrayOf(ev.getX(idx), ev.getY(idx), eraserRadius * baseScale * zoom) }
             tool == Tool.SHAPE -> { shapeStart = p.copyOf(); shapeEnd = p.copyOf(); shapeConstrain = false }
@@ -873,7 +989,7 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
 
     /** Hold-to-snap: called when the pen rested for [autoShapeHoldMs] during a stroke. */
     private fun trySnapCurrentStroke() {
-        if (drawingPointerId == -1 || erasing || strokeConsumed || shapeStart != null || !autoShape) return
+        if (drawingPointerId == -1 || erasing || strokeConsumed || shapeStart != null || lassoing || moving || !autoShape) return
         if (SystemClock.uptimeMillis() - lastMoveTime < autoShapeHoldMs - 20) return
         val pts = curPts.toArray()
         if (InkGeometry.length(pts) < 12f) return
@@ -944,6 +1060,14 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
     private fun finishStroke() {
         if (drawingPointerId == -1) return
         removeCallbacks(holdRunnable)
+        if (lassoing || moving) {
+            if (lassoing) completeLasso() else completeMove()
+            drawingPointerId = -1; drawingPage = -1; erasing = false; strokeConsumed = false
+            lassoing = false; moving = false; moveDx = 0f; moveDy = 0f
+            curPts.clear(); predictedPts = FloatArray(0)
+            invalidate()
+            return
+        }
         val page = keyOf(drawingPage)
         val start = shapeStart
         if (strokeConsumed) {
@@ -990,10 +1114,179 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
 
     private fun cancelStroke() {
         removeCallbacks(holdRunnable)
+        lassoing = false; moving = false; moveDx = 0f; moveDy = 0f
         drawingPointerId = -1; drawingPage = -1; erasing = false; strokeConsumed = false
         curPts.clear(); erasedThisGesture.clear(); eraserCursor = null; predictedPts = FloatArray(0)
         shapeStart = null; shapeEnd = null
         invalidate()
+    }
+
+    // ================================================================== lasso
+
+    val hasSelection: Boolean get() = selIds.isNotEmpty()
+    val canPaste: Boolean get() = clipboard.isNotEmpty()
+
+    private fun notifySelection() { listener?.onSelectionChanged(selIds.size, clipboard.isNotEmpty()) }
+
+    fun clearSelection() {
+        if (selIds.isEmpty() && selPage == -1) return
+        selIds = emptySet(); selBounds = null; selPage = -1
+        notifySelection(); invalidate()
+    }
+
+    private fun selectedStrokes(): List<Stroke> =
+        if (selPage < 0) emptyList() else ink.strokesAt(keyOf(selPage)).filter { it.id in selIds }
+
+    private fun boundsOf(strokes: List<Stroke>): RectF? {
+        if (strokes.isEmpty()) return null
+        val r = RectF(Float.MAX_VALUE, Float.MAX_VALUE, -Float.MAX_VALUE, -Float.MAX_VALUE)
+        strokes.forEach { val b = it.bounds(); r.union(b[0], b[1], b[2], b[3]) }
+        return r
+    }
+
+    private fun select(page: Int, strokes: List<Stroke>) {
+        selPage = if (strokes.isEmpty()) -1 else page
+        selIds = strokes.map { it.id }.toSet()
+        selBounds = boundsOf(strokes)
+        notifySelection(); invalidate()
+    }
+
+    /** Screen point inside the selection box (with a little slack for fingers). */
+    private fun insideSelection(sx: Float, sy: Float): Boolean {
+        val b = selBounds ?: return false
+        if (selPage < 0 || selPage >= pageRects.size) return false
+        val p = FloatArray(2)
+        screenToPageRaw(selPage, sx, sy, p)
+        val slack = 10f * density / (baseScale * zoom)
+        return p[0] >= b.left - slack && p[0] <= b.right + slack && p[1] >= b.top - slack && p[1] <= b.bottom + slack
+    }
+
+    /** Like [screenToPage] but without clamping to the page (for drag deltas). */
+    private fun screenToPageRaw(i: Int, sx: Float, sy: Float, out: FloatArray) {
+        val r = pageRects[i]
+        out[0] = ((sx + effOffX()) / zoom - r.left) / baseScale
+        out[1] = ((sy + offY) / zoom - r.top) / baseScale
+    }
+
+    private fun updateMove(sx: Float, sy: Float) {
+        val p = FloatArray(2)
+        screenToPageRaw(selPage, sx, sy, p)
+        moveDx = p[0] - moveStartX; moveDy = p[1] - moveStartY
+    }
+
+    private fun completeLasso() {
+        val poly = curPts.toArray()
+        val n = poly.size / 3
+        if (n < 3) { clearSelection(); return }
+        fun inside(x: Float, y: Float): Boolean {
+            var c = false; var j = n - 1
+            for (k in 0 until n) {
+                val xi = poly[k * 3]; val yi = poly[k * 3 + 1]; val xj = poly[j * 3]; val yj = poly[j * 3 + 1]
+                if ((yi > y) != (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) c = !c
+                j = k
+            }
+            return c
+        }
+        val hits = ink.strokesAt(keyOf(drawingPage)).filter { s ->
+            val m = s.pointCount
+            if (m == 0) return@filter false
+            var inCount = 0
+            for (k in 0 until m) if (inside(s.x(k), s.y(k))) inCount++
+            inCount * 2 >= m      // at least half the stroke inside the loop
+        }
+        select(drawingPage, hits)
+    }
+
+    private fun translated(s: Stroke, dx: Float, dy: Float, now: Long): Stroke {
+        val pts = s.pts.copyOf()
+        for (k in 0 until s.pointCount) { pts[k * 3] += dx; pts[k * 3 + 1] += dy }
+        return s.copy(id = UUID.randomUUID().toString(), t = now, pts = pts)
+    }
+
+    private fun completeMove() {
+        val dx = moveDx; val dy = moveDy
+        if (kotlin.math.abs(dx) < 0.3f && kotlin.math.abs(dy) < 0.3f) return
+        val key = keyOf(selPage)
+        val old = selectedStrokes()
+        if (old.isEmpty()) return
+        val now = System.currentTimeMillis()
+        val moved = old.map { translated(it, dx, dy, now) }
+        ink = moved.fold(ink.removeStrokes(key, old.map { it.id })) { d, s -> d.addStroke(key, s) }
+        old.forEach { pathCache.remove(it.id) }
+        undo.record(UndoManager.Op.Replace(key, old, moved))
+        select(selPage, moved)
+        emitInkChanged()
+    }
+
+    fun copySelection() {
+        val strokes = selectedStrokes()
+        if (strokes.isEmpty()) return
+        clipboard = strokes
+        notifySelection()
+    }
+
+    fun deleteSelection() {
+        val strokes = selectedStrokes()
+        if (strokes.isEmpty()) return
+        val key = keyOf(selPage)
+        ink = ink.removeStrokes(key, strokes.map { it.id })
+        strokes.forEach { pathCache.remove(it.id) }
+        undo.record(UndoManager.Op.Erase(key, strokes))
+        clearSelection()
+        emitInkChanged()
+    }
+
+    fun cutSelection() { copySelection(); deleteSelection() }
+
+    /** Pastes the clipboard onto the current page, centred in the visible part of it, and selects it. */
+    fun paste() {
+        if (clipboard.isEmpty() || pageRects.isEmpty()) return
+        finishStrokeIfAny()
+        val page = currentPage()
+        val key = keyOf(page)
+        val size = source?.pageSize(page) ?: return
+        val src = boundsOf(clipboard) ?: return
+        // Centre of what is visible of the page, in page points.
+        val sr = pageScreenRect(page)
+        val c = FloatArray(2)
+        screenToPage(page, ((max(0f, sr.left) + min(width.toFloat(), sr.right)) / 2f), ((max(0f, sr.top) + min(height.toFloat(), sr.bottom)) / 2f), c)
+        var dx = c[0] - src.centerX(); var dy = c[1] - src.centerY()
+        // Same page and same place as the original: nudge so the copy is visible.
+        if (kotlin.math.abs(dx) < 4f && kotlin.math.abs(dy) < 4f) { dx = 12f; dy = 12f }
+        dx = dx.coerceIn(-src.left, size.w - src.right).takeIf { !it.isNaN() } ?: 0f
+        dy = dy.coerceIn(-src.top, size.h - src.bottom).takeIf { !it.isNaN() } ?: 0f
+        val now = System.currentTimeMillis()
+        val pasted = clipboard.map { translated(it, dx, dy, now) }
+        ink = pasted.fold(ink) { d, s -> d.addStroke(key, s) }
+        undo.record(UndoManager.Op.Add(key, pasted))
+        select(page, pasted)
+        emitInkChanged()
+    }
+
+    private fun drawLassoOverlay(canvas: Canvas, scale: Float) {
+        val tmp = RectF()
+        if (lassoing && drawingPage >= 0 && curPts.size >= 6) {
+            pageScreenRect(drawingPage, tmp)
+            val path = Path()
+            val pts = curPts.toArray()
+            path.moveTo(tmp.left + pts[0] * scale, tmp.top + pts[1] * scale)
+            var k = 3
+            while (k < pts.size) { path.lineTo(tmp.left + pts[k] * scale, tmp.top + pts[k + 1] * scale); k += 3 }
+            path.close()
+            canvas.drawPath(path, selFill)
+            canvas.drawPath(path, selPaint)
+        }
+        val b = selBounds
+        if (b != null && selPage >= 0 && selPage < pageRects.size) {
+            pageScreenRect(selPage, tmp)
+            val pad = 6f * density
+            val r = RectF(
+                tmp.left + (b.left + moveDx) * scale - pad, tmp.top + (b.top + moveDy) * scale - pad,
+                tmp.left + (b.right + moveDx) * scale + pad, tmp.top + (b.bottom + moveDy) * scale + pad
+            )
+            canvas.drawRoundRect(r, 8f * density, 8f * density, selFill)
+            canvas.drawRoundRect(r, 8f * density, 8f * density, selPaint)
+        }
     }
 
     private fun emitInkChanged() { listener?.onInkChanged(ink, undo.canUndo, undo.canRedo) }
@@ -1017,7 +1310,9 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
     }
 
     companion object {
-        private const val PALM_WINDOW_MS = 350L
+        private const val PALM_WINDOW_MS = 600L
+        /** Shared across notes so ink can be copied from one PDF and pasted into another. */
+        private var clipboard: List<Stroke> = emptyList()
         private const val MIN_POINT_DISTANCE = 0.25f
         private const val HOLD_MOVE_TOLERANCE = 1.5f
         private const val HL_ALPHA = 110

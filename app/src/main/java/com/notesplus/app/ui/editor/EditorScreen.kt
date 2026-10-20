@@ -46,6 +46,13 @@ import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.automirrored.filled.ViewSidebar
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoFixNormal
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.ContentCut
+import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.FrontHand
+import androidx.compose.material.icons.filled.HighlightAlt
 import androidx.compose.material.icons.filled.BorderColor
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.ChangeHistory
@@ -231,6 +238,11 @@ fun EditorScreen(noteId: String, onBack: () -> Unit) {
                                     onClick = { menu = false; vm.setAutoShape(!state.autoShape) }
                                 )
                                 DropdownMenuItem(
+                                    text = { Text(if (state.palmGuard) "Palm guard: on (two-finger scroll)" else "Palm guard: off") },
+                                    leadingIcon = { Icon(Icons.Default.FrontHand, null) },
+                                    onClick = { menu = false; vm.setPalmGuard(!state.palmGuard) }
+                                )
+                                DropdownMenuItem(
                                     text = { Text(if (state.fingerDraws) "Finger: draws" else "Finger: scrolls") },
                                     leadingIcon = { Icon(Icons.Default.TouchApp, null) },
                                     onClick = { menu = false; vm.setFingerDraws(!state.fingerDraws) }
@@ -262,6 +274,7 @@ fun EditorScreen(noteId: String, onBack: () -> Unit) {
                                         override fun onInkChanged(doc: InkDocument, canUndo: Boolean, canRedo: Boolean) = vm.onInkChanged(doc, canUndo, canRedo)
                                         override fun onViewportChanged(currentPage: Int, pageCount: Int, zoom: Float) = vm.onViewportChanged(currentPage, pageCount, zoom)
                                         override fun onToolShortcut(tool: DocumentView.Tool) = vm.setTool(tool)
+                                        override fun onSelectionChanged(selected: Int, canPaste: Boolean) = vm.onSelectionChanged(selected, canPaste)
                                     }
                                     vm.pageSource?.let { src -> v.post { v.setDocument(src, vm.initialInk) } }
                                     view = v
@@ -278,6 +291,7 @@ fun EditorScreen(noteId: String, onBack: () -> Unit) {
                                 v.autoShape = state.autoShape
                                 v.motionPrediction = state.motionPrediction
                                 v.straightHighlighter = state.straightHighlighter
+                                v.palmGuard = state.palmGuard
                             },
                             modifier = Modifier.fillMaxSize()
                         )
@@ -291,6 +305,12 @@ fun EditorScreen(noteId: String, onBack: () -> Unit) {
                             }
                             PagesPanel(vm, state, visible = state.showPages, fromRight = !state.railOnRight, onPage = { view?.scrollToPage(it) }, modifier = Modifier.align(panelAlign))
                         }
+                        SelectionBar(
+                            state, visible = state.tool == DocumentView.Tool.LASSO && (state.selectionCount > 0 || state.canPaste),
+                            onCopy = { view?.copySelection() }, onCut = { view?.cutSelection() }, onDelete = { view?.deleteSelection() },
+                            onPaste = { view?.paste() }, onClear = { view?.clearSelection() },
+                            modifier = Modifier.align(Alignment.TopCenter).padding(top = 12.dp)
+                        )
                         PagePill(state, onPrev = { view?.scrollToPage(state.currentPage - 1) }, onNext = { view?.scrollToPage(state.currentPage + 1) }, onJump = { showJump = true },
                             modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp))
                         OptionsPanel(state, vm, visible = showOptions, onClose = { showOptions = false }, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 64.dp))
@@ -439,6 +459,7 @@ private fun FloatingToolRail(
             ToolButton(Icons.Default.BorderColor, "Highlighter (H)", state.tool == DocumentView.Tool.HIGHLIGHTER) { onTool(DocumentView.Tool.HIGHLIGHTER) }
             ToolButton(Icons.Default.AutoFixNormal, "Eraser (E)", state.tool == DocumentView.Tool.ERASER) { onTool(DocumentView.Tool.ERASER) }
             ShapeToolButton(state, onTool, onShape)
+            ToolButton(Icons.Default.HighlightAlt, "Lasso select (L)", state.tool == DocumentView.Tool.LASSO) { onTool(DocumentView.Tool.LASSO) }
             ToolButton(Icons.Default.PanTool, "Pan / zoom (Space)", state.tool == DocumentView.Tool.PAN) { onTool(DocumentView.Tool.PAN) }
             val inkTool = state.tool == DocumentView.Tool.PEN || state.tool == DocumentView.Tool.HIGHLIGHTER || state.tool == DocumentView.Tool.SHAPE
             AnimatedVisibility(inkTool) {
@@ -479,6 +500,7 @@ private fun BottomToolBar(
             ToolButton(Icons.Default.BorderColor, "Highlighter", state.tool == DocumentView.Tool.HIGHLIGHTER) { onTool(DocumentView.Tool.HIGHLIGHTER) }
             ToolButton(Icons.Default.AutoFixNormal, "Eraser", state.tool == DocumentView.Tool.ERASER) { onTool(DocumentView.Tool.ERASER) }
             ShapeToolButton(state, onTool, onShape)
+            ToolButton(Icons.Default.HighlightAlt, "Lasso select", state.tool == DocumentView.Tool.LASSO) { onTool(DocumentView.Tool.LASSO) }
             ToolButton(Icons.Default.PanTool, "Pan / zoom", state.tool == DocumentView.Tool.PAN) { onTool(DocumentView.Tool.PAN) }
             val hl = state.tool == DocumentView.Tool.HIGHLIGHTER
             if (state.tool == DocumentView.Tool.PEN || hl || state.tool == DocumentView.Tool.SHAPE) {
@@ -488,6 +510,28 @@ private fun BottomToolBar(
                     ColorSwatch(c, c == selected, onLongClick = if (i >= 0) ({ onEditSlot(i) }) else null) { onColor(c) }
                 }
                 MoreColorsButton(onMoreColors)
+            }
+        }
+    }
+}
+
+/** Actions for the lasso selection: copy, cut, paste, delete. */
+@Composable
+private fun SelectionBar(
+    state: EditorState, visible: Boolean,
+    onCopy: () -> Unit, onCut: () -> Unit, onDelete: () -> Unit, onPaste: () -> Unit, onClear: () -> Unit,
+    modifier: Modifier
+) {
+    AnimatedVisibility(visible, modifier = modifier, enter = slideInVertically { -it } + fadeIn(), exit = slideOutVertically { -it } + fadeOut()) {
+        Surface(shape = CircleShape, tonalElevation = 4.dp, shadowElevation = 6.dp, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 6.dp)) {
+                val has = state.selectionCount > 0
+                Text(if (has) "${state.selectionCount} selected" else "Clipboard", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = 10.dp))
+                IconButton(onClick = onCopy, enabled = has) { Icon(Icons.Default.ContentCopy, contentDescription = "Copy") }
+                IconButton(onClick = onCut, enabled = has) { Icon(Icons.Default.ContentCut, contentDescription = "Cut") }
+                IconButton(onClick = onPaste, enabled = state.canPaste) { Icon(Icons.Default.ContentPaste, contentDescription = "Paste") }
+                IconButton(onClick = onDelete, enabled = has) { Icon(Icons.Default.Delete, contentDescription = "Delete") }
+                if (has) IconButton(onClick = onClear) { Icon(Icons.Default.Close, contentDescription = "Deselect") }
             }
         }
     }

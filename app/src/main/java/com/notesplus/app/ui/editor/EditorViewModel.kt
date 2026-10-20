@@ -60,7 +60,10 @@ data class EditorState(
     val penPalette: List<Int> = DEFAULT_PEN_PALETTE,
     val highlighterPalette: List<Int> = DEFAULT_HIGHLIGHTER_PALETTE,
     val insertPaper: PaperStyle = PaperStyle.RULED,
-    val showPages: Boolean = false
+    val showPages: Boolean = false,
+    val palmGuard: Boolean = true,
+    val selectionCount: Int = 0,
+    val canPaste: Boolean = false
 )
 
 sealed class EditorEvent {
@@ -103,6 +106,7 @@ class EditorViewModel(private val app: NotesPlusApp, private val noteId: String)
                 it.copy(
                     penColor = s.penColor, penWidth = s.penWidth, highlighterColor = s.highlighterColor, highlighterWidth = s.highlighterWidth,
                     eraserRadius = s.eraserRadius, fingerDraws = s.fingerDrawing, stylusButtonErases = s.stylusButtonErases,
+                    palmGuard = s.palmGuard,
                     autoShape = s.autoShape, railOnRight = s.railOnRight, motionPrediction = s.motionPrediction,
                     straightHighlighter = s.straightHighlighter, recentColors = s.recentColors,
                     penPalette = s.penPalette, highlighterPalette = s.highlighterPalette, insertPaper = s.insertPaper,
@@ -225,6 +229,13 @@ class EditorViewModel(private val app: NotesPlusApp, private val noteId: String)
         _state.update { it.copy(autoShape = v) }
         viewModelScope.launch { c.prefs.setAutoShape(v) }
     }
+
+    fun setPalmGuard(v: Boolean) {
+        _state.update { it.copy(palmGuard = v) }
+        viewModelScope.launch { c.prefs.setPalmGuard(v) }
+    }
+
+    fun onSelectionChanged(count: Int, canPaste: Boolean) = _state.update { it.copy(selectionCount = count, canPaste = canPaste) }
 
     fun togglePages() = _state.update { it.copy(showPages = !it.showPages) }
 

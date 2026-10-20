@@ -48,6 +48,8 @@ data class Settings(
     val syncOnMeteredNetworks: Boolean = true,
     val writeBack: WriteBackMode = WriteBackMode.IN_PLACE,
     val fingerDrawing: Boolean = false,
+    /** One finger does nothing on the page; scroll and zoom with two fingers (palm-proof). */
+    val palmGuard: Boolean = true,
     val stylusButtonErases: Boolean = true,
     val lastSyncAt: Long = 0L,
     val lastSyncStatus: String = "",
@@ -90,6 +92,7 @@ class Prefs(private val context: Context) {
         val metered = booleanPreferencesKey("sync_metered")
         val writeBack = stringPreferencesKey("write_back_mode")
         val fingerDrawing = booleanPreferencesKey("finger_drawing")
+        val palmGuard = booleanPreferencesKey("palm_guard")
         val stylusButtonErases = booleanPreferencesKey("stylus_button_erases")
         val lastSyncAt = longPreferencesKey("last_sync_at")
         val lastSyncStatus = stringPreferencesKey("last_sync_status")
@@ -123,6 +126,7 @@ class Prefs(private val context: Context) {
             syncOnMeteredNetworks = p[K.metered] ?: d.syncOnMeteredNetworks,
             writeBack = p[K.writeBack]?.let { runCatching { WriteBackMode.valueOf(it) }.getOrNull() } ?: d.writeBack,
             fingerDrawing = p[K.fingerDrawing] ?: d.fingerDrawing,
+            palmGuard = p[K.palmGuard] ?: d.palmGuard,
             stylusButtonErases = p[K.stylusButtonErases] ?: d.stylusButtonErases,
             lastSyncAt = p[K.lastSyncAt] ?: 0L,
             lastSyncStatus = p[K.lastSyncStatus] ?: "",
@@ -159,6 +163,7 @@ class Prefs(private val context: Context) {
     suspend fun setSyncOnMetered(v: Boolean) = context.dataStore.edit { it[K.metered] = v }
     suspend fun setWriteBack(v: WriteBackMode) = context.dataStore.edit { it[K.writeBack] = v.name }
     suspend fun setFingerDrawing(v: Boolean) = context.dataStore.edit { it[K.fingerDrawing] = v }
+    suspend fun setPalmGuard(v: Boolean) = context.dataStore.edit { it[K.palmGuard] = v }
     suspend fun setStylusButtonErases(v: Boolean) = context.dataStore.edit { it[K.stylusButtonErases] = v }
     suspend fun setLastSync(at: Long, status: String) = context.dataStore.edit { it[K.lastSyncAt] = at; it[K.lastSyncStatus] = status }
     suspend fun setPen(color: Int, width: Float) = context.dataStore.edit { it[K.penColor] = color; it[K.penWidth] = width }

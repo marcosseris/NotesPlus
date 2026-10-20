@@ -16,6 +16,8 @@ class UndoManager(private val limit: Int = 200) {
         class Erase(val page: PageKey, var strokes: List<Stroke>) : Op()
         class InsertPage(var insert: PageInsert) : Op()
         class RemovePage(var insert: PageInsert) : Op()
+        /** Strokes swapped for new ones (a lasso move). */
+        class Replace(val page: PageKey, var removed: List<Stroke>, var added: List<Stroke>) : Op()
     }
 
     private val undoStack = ArrayDeque<Op>()
@@ -46,6 +48,11 @@ class UndoManager(private val limit: Int = 200) {
             }
             is Op.InsertPage -> doc.removeInsert(op.insert.id)
             is Op.RemovePage -> { val copy = freshCopy(op.insert); op.insert = copy; doc.addInsert(copy) }
+            is Op.Replace -> {
+                val back = op.removed.map { it.copy(id = UUID.randomUUID().toString()) }
+                op.removed = back
+                back.fold(doc.removeStrokes(op.page, op.added.map { it.id })) { d, s -> d.addStroke(op.page, s) }
+            }
         }
         redoStack.addLast(op)
         return result
@@ -62,6 +69,11 @@ class UndoManager(private val limit: Int = 200) {
             is Op.Erase -> doc.removeStrokes(op.page, op.strokes.map { it.id })
             is Op.InsertPage -> { val copy = freshCopy(op.insert); op.insert = copy; doc.addInsert(copy) }
             is Op.RemovePage -> doc.removeInsert(op.insert.id)
+            is Op.Replace -> {
+                val again = op.added.map { it.copy(id = UUID.randomUUID().toString()) }
+                op.added = again
+                again.fold(doc.removeStrokes(op.page, op.removed.map { it.id })) { d, s -> d.addStroke(op.page, s) }
+            }
         }
         undoStack.addLast(op)
         return result
