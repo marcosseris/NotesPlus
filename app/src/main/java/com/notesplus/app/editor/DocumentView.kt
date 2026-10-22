@@ -5,8 +5,6 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
-import android.graphics.PorterDuff
-import android.graphics.PorterDuffXfermode
 import android.graphics.RectF
 import android.os.SystemClock
 import android.view.HapticFeedbackConstants
@@ -131,7 +129,7 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
     private val penPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val hlPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
-        xfermode = PorterDuffXfermode(PorterDuff.Mode.MULTIPLY)
+        applyHighlighterBlend(this)
     }
     private val eraserPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1.5f * density; color = 0xAA333333.toInt() }
     private val eraserFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = 0x22000000 }
@@ -1349,6 +1347,18 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
         private var clipboard: List<Stroke> = emptyList()
         private const val MIN_POINT_DISTANCE = 0.25f
         private const val HOLD_MOVE_TOLERANCE = 1.5f
-        private const val HL_ALPHA = 110
+        /**
+         * Highlighter opacity. With a true multiply blend (Android 10+) text under the ink stays
+         * black and white paper only takes on the tint; older devices fall back to a lighter overlay.
+         */
+        val HL_ALPHA = if (android.os.Build.VERSION.SDK_INT >= 29) 135 else 85
+
+        /**
+         * Real multiply blending. The legacy PorterDuff MULTIPLY mode also multiplies alpha, which
+         * punched see-through holes into the page and made highlights look dark and muddy.
+         */
+        fun applyHighlighterBlend(p: Paint) {
+            if (android.os.Build.VERSION.SDK_INT >= 29) p.blendMode = android.graphics.BlendMode.MULTIPLY
+        }
     }
 }

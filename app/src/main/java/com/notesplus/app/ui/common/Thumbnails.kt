@@ -56,7 +56,7 @@ class ThumbnailLoader(private val repo: NoteRepository) {
         val scale = widthPx / size.w
         c.scale(scale, scale)
         val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-        val hl = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND; alpha = 110 }
+        val hl = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND; com.notesplus.app.editor.DocumentView.applyHighlighterBlend(this) }
         for (s in strokes) {
             val path = Path()
             if (s.tool == ToolType.PEN) {
@@ -67,7 +67,7 @@ class ThumbnailLoader(private val repo: NoteRepository) {
                 path.close(); fill.color = s.color; c.drawPath(path, fill)
             } else {
                 path.moveTo(s.x(0), s.y(0)); for (i in 1 until s.pointCount) path.lineTo(s.x(i), s.y(i))
-                hl.color = s.color; hl.alpha = 110; hl.strokeWidth = s.width; c.drawPath(path, hl)
+                hl.color = s.color; hl.alpha = com.notesplus.app.editor.DocumentView.HL_ALPHA; hl.strokeWidth = s.width; c.drawPath(path, hl)
             }
         }
         return bmp

@@ -195,7 +195,7 @@ class PdfExporter(private val context: Context, private val repo: NoteRepository
         PDPageContentStream(doc, page, PDPageContentStream.AppendMode.APPEND, true, false).use { cs ->
             cs.restoreGraphicsState()
             cs.beginMarkedContent(COSName.OC, group)
-            val hlState = PDExtendedGraphicsState().apply { strokingAlphaConstant = 0.40f; nonStrokingAlphaConstant = 0.40f; blendMode = BlendMode.MULTIPLY }
+            val hlState = PDExtendedGraphicsState().apply { strokingAlphaConstant = 0.53f; nonStrokingAlphaConstant = 0.53f; blendMode = BlendMode.MULTIPLY }
             val penState = PDExtendedGraphicsState().apply { strokingAlphaConstant = 1f; nonStrokingAlphaConstant = 1f; blendMode = BlendMode.NORMAL }
             var currentTool: ToolType? = null
             for (s in strokes.sortedBy { it.t }) {
