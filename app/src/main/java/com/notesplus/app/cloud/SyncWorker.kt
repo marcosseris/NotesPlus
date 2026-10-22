@@ -22,7 +22,6 @@ class SyncWorker(appContext: Context, params: WorkerParameters) : CoroutineWorke
         val c = app.container
         if (c.cloudRepository.signedInProviders().isEmpty()) return Result.success()
         val result = c.syncEngine.sync()
-        if (result.writeBackLater) c.syncScheduler.requestSync(delayMs = 60_000L)
         return when {
             result.ok -> Result.success()
             runAttemptCount < 3 -> Result.retry()

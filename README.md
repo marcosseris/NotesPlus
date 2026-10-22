@@ -31,7 +31,7 @@ show up on your computer too.
 * **Annotations you can always edit** – strokes live in a small `<name>.pdf.ink.json` inside a
   hidden `.ink` folder next to the PDF. Reopen any annotated PDF later, erase individual strokes or everything, add more.
   Two devices editing offline merge cleanly instead of overwriting each other.
-* **Visible everywhere** – after you stop editing, the PDF on your drive is rewritten with your
+* **Visible everywhere** – when you close a document, the PDF on your drive is rewritten with your
   ink on a separate, marked layer. Any viewer shows it; Acrobat lets you hide the layer. The
   original pages stay inside the file untouched, so NotesPlus can always recover the pristine
   PDF (and you can switch to a sibling `*.annotated.pdf` or turn write-back off in Settings).

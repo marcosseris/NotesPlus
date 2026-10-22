@@ -170,9 +170,11 @@ fun EditorScreen(noteId: String, onBack: () -> Unit) {
         lifecycleOwner.lifecycle.addObserver(obs)
         val window = (context as? ComponentActivity)?.window
         window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        (context as? com.notesplus.app.MainActivity)?.setHighRefreshRate(true)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(obs)
             window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            (context as? com.notesplus.app.MainActivity)?.setHighRefreshRate(false)
             vm.savePosition(view?.positionSnapshot())
             vm.flushNow()
         }

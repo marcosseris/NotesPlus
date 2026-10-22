@@ -25,7 +25,6 @@ class MainActivity : ComponentActivity() {
         installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        preferHighRefreshRate()
         setContent { NotesPlusTheme { AppNav() } }
     }
 
@@ -38,18 +37,21 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Ask for the display mode with the highest refresh rate at the native resolution.
-     * Some tablets (the Honor Pad 9 among them) keep third-party apps at 60 Hz unless asked.
+     * Requests the display's highest refresh rate (the Honor Pad 9 keeps third-party apps at
+     * 60 Hz otherwise) while [enabled]; with false the system picks the rate again. The editor
+     * turns this on for smooth ink and off when it closes, so browsing does not burn battery.
      */
-    private fun preferHighRefreshRate() {
+    fun setHighRefreshRate(enabled: Boolean) {
         val display: Display = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) display else null)
             ?: getSystemService(DisplayManager::class.java).getDisplay(Display.DEFAULT_DISPLAY) ?: return
-        val current = display.mode
-        val best = display.supportedModes
-            .filter { it.physicalWidth == current.physicalWidth && it.physicalHeight == current.physicalHeight }
-            .maxByOrNull { it.refreshRate } ?: return
-        if (best.modeId != current.modeId) {
-            window.attributes = window.attributes.apply { preferredDisplayModeId = best.modeId }
+        val modeId = if (enabled) {
+            val current = display.mode
+            display.supportedModes
+                .filter { it.physicalWidth == current.physicalWidth && it.physicalHeight == current.physicalHeight }
+                .maxByOrNull { it.refreshRate }?.modeId ?: return
+        } else 0
+        if (window.attributes.preferredDisplayModeId != modeId) {
+            window.attributes = window.attributes.apply { preferredDisplayModeId = modeId }
         }
     }
 }

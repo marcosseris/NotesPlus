@@ -239,7 +239,7 @@ class SyncEngine(
     }
 
     private suspend fun doSync(force: Boolean): SyncResult {
-        var uploaded = 0; var pulled = 0; var later = false
+        var uploaded = 0; var pulled = 0
         val settings = prefs.current()
         val failures = ArrayList<String>()
 
@@ -251,11 +251,12 @@ class SyncEngine(
                 var n = note
                 if (n.inkDirty) { progress("Uploading annotations for ${n.title}"); n = pushSidecar(provider, n); uploaded++ }
                 if (n.writeBackPending && settings.writeBack != WriteBackMode.OFF) {
-                    val idle = System.currentTimeMillis() - n.modifiedAt > WRITE_BACK_IDLE_MS
-                    if (force || idle || n.id !in openNotes) {
+                    // Rebuilding and uploading the whole PDF is expensive: only once the document
+                    // has been closed. Closing the editor schedules the sync that does it.
+                    if (n.id !in openNotes) {
                         progress("Writing annotated PDF for ${n.title}")
                         writeBack(provider, n, settings.writeBack); uploaded++
-                    } else later = true
+                    }
                 } else if (n.writeBackPending) {
                     repo.update(n.copy(writeBackPending = false))
                 }
@@ -298,7 +299,7 @@ class SyncEngine(
             uploaded == 0 && pulled == 0 -> "Up to date"
             else -> listOfNotNull(uploaded.takeIf { it > 0 }?.let { "$it uploaded" }, pulled.takeIf { it > 0 }?.let { "$it updated" }).joinToString(", ")
         }
-        return SyncResult(failures.isEmpty(), msg, uploaded, pulled, later)
+        return SyncResult(failures.isEmpty(), msg, uploaded, pulled)
     }
 
     /** Uploads the sidecar; on a conflict merges the remote copy first and retries. */
@@ -416,7 +417,6 @@ class SyncEngine(
 
     private companion object {
         const val TAG = "SyncEngine"
-        const val WRITE_BACK_IDLE_MS = 45_000L
         const val PULL_RECENT = 12
     }
 }
