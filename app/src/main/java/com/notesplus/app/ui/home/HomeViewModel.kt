@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
@@ -103,7 +104,8 @@ class HomeViewModel(private val app: NotesPlusApp) : ViewModel() {
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), BrowseState())
 
     val recent: StateFlow<RecentState> = combine(c.repository.observeNotes(), c.syncEngine.status, c.repository.observeDirtyCount(), c.prefs.settings) { notes, sync, dirty, s ->
-        RecentState(notes, sync, dirty, s.lastSyncAt, s.lastSyncStatus)
+        // Pre-downloaded files you have never opened stay out of Recent.
+        RecentState(notes.filter { it.lastOpenedAt > 0 }, sync, dirty, s.lastSyncAt, s.lastSyncStatus)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), RecentState())
 
     init {
@@ -156,11 +158,12 @@ class HomeViewModel(private val app: NotesPlusApp) : ViewModel() {
         val loc = location.value ?: return
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
-            if (!force && !cloud.isStale(loc.provider, loc.folderId)) return@launch
+            if (!force && !cloud.isStale(loc.provider, loc.folderId)) { maybePrefetch(loc); return@launch }
             refreshing.value = true
             val err = cloud.refresh(loc.provider, loc.folderId, force = true)
             if (location.value == loc) error.value = err
             refreshing.value = false
+            if (err == null && location.value == loc) maybePrefetch(loc)
         }
     }
 
@@ -169,11 +172,46 @@ class HomeViewModel(private val app: NotesPlusApp) : ViewModel() {
         viewModelScope.launch {
             opening.value = item.id
             try {
-                val note = c.syncEngine.prepareNote(item) { msg -> _events.tryEmit(HomeEvent.Message(msg)) }
+                val wasLocal = c.repository.byRemote(item.provider, item.id)?.let { c.repository.pdfFile(it.id).exists() } == true
+                var lastPct = -1
+                val note = c.syncEngine.prepareNote(
+                    item,
+                    onProgress = { msg -> working.value = msg },
+                    onBytes = { done, total ->
+                        val pct = if (total > 0) (done * 100 / total).toInt() else -1
+                        if (pct != lastPct) {
+                            lastPct = pct
+                            working.value = if (pct >= 0) "Downloading ${item.name} · $pct%" else "Downloading ${item.name} · ${com.notesplus.app.util.Files.humanSize(done)}"
+                        }
+                    }
+                )
                 _events.emit(HomeEvent.OpenNote(note.id))
+                // Check the drive for a newer PDF and annotations after the editor is already up.
+                app.appScope.launch { c.syncEngine.refreshOpened(note.id, checkPdf = wasLocal) }
             } catch (e: Exception) {
                 _events.emit(HomeEvent.Message("Could not open ${item.name}: ${e.message}"))
-            } finally { opening.value = null }
+            } finally { opening.value = null; working.value = null }
+        }
+    }
+
+    private var prefetchJob: Job? = null
+
+    /** Downloads the folder's PDFs in the background on Wi-Fi so they open instantly later. */
+    private fun maybePrefetch(loc: Location) {
+        prefetchJob?.cancel()
+        prefetchJob = viewModelScope.launch {
+            if (!c.prefs.current().prefetch) return@launch
+            val cm = app.getSystemService(android.net.ConnectivityManager::class.java)
+            if (cm == null || cm.isActiveNetworkMetered) return@launch
+            kotlinx.coroutines.delay(1_500)
+            val candidates = cloud.observeChildren(loc.provider, loc.folderId).first()
+                .filter { !it.isFolder && it.name.endsWith(".pdf", true) && it.size in 1..PREFETCH_MAX_BYTES }
+                .take(PREFETCH_MAX_FILES)
+            for (item in candidates) {
+                if (location.value != loc) break
+                if (c.repository.byRemote(item.provider, item.id) != null) continue
+                runCatching { c.syncEngine.prepareNote(item, markOpened = false) }
+            }
         }
     }
 
@@ -236,6 +274,7 @@ class HomeViewModel(private val app: NotesPlusApp) : ViewModel() {
                 working.value = "Opening ${uploaded.name}…"
                 val note = c.syncEngine.prepareNote(item)
                 _events.emit(HomeEvent.OpenNote(note.id))
+                app.appScope.launch { c.syncEngine.refreshOpened(note.id, checkPdf = false) }
             } catch (e: Exception) {
                 _events.emit(HomeEvent.Message("Could not add the PDF: ${e.message}"))
             } finally {
@@ -258,7 +297,18 @@ class HomeViewModel(private val app: NotesPlusApp) : ViewModel() {
         app.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cur -> if (cur.moveToFirst()) cur.getString(0) else null }
     }.getOrNull()
 
-    fun openRecent(note: NoteEntity) { viewModelScope.launch { _events.emit(HomeEvent.OpenNote(note.id)) } }
+    fun openRecent(note: NoteEntity) {
+        viewModelScope.launch {
+            c.repository.touchOpened(note.id)
+            _events.emit(HomeEvent.OpenNote(note.id))
+            app.appScope.launch { c.syncEngine.refreshOpened(note.id) }
+        }
+    }
+
+    private companion object {
+        const val PREFETCH_MAX_FILES = 15
+        const val PREFETCH_MAX_BYTES = 40L * 1024 * 1024
+    }
 
     fun removeLocal(note: NoteEntity) = viewModelScope.launch {
         c.repository.removeLocal(note.id)

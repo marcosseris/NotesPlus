@@ -136,16 +136,17 @@ class GoogleDriveProvider(private val http: AuthedHttp) : CloudProvider {
         if (!r.isSuccessful && r.code != 404) fail(r)
     }
 
-    override suspend fun download(file: CloudFile, dest: File) = withContext(Dispatchers.IO) {
+    override suspend fun download(file: CloudFile, dest: File, onProgress: ((Long, Long) -> Unit)?) = withContext(Dispatchers.IO) {
         http.openAuthed("$BASE/files/${file.id}?alt=media&supportsAllDrives=true").use { r ->
             if (!r.isSuccessful) fail(r.code, r.message, r.body?.string())
             val body = r.body ?: throw IOException("Empty download body")
-            body.byteStream().use { Files.writeAtomic(dest, it) }
+            val total = body.contentLength().takeIf { it > 0 } ?: file.size
+            body.byteStream().use { Files.writeAtomic(dest, it, total) { a, b -> onProgress?.invoke(a, b) } }
         }
     }
 
-    override suspend fun downloadAsPdf(file: CloudFile, dest: File) = withContext(Dispatchers.IO) {
-        if (file.isPdf) return@withContext download(file, dest)
+    override suspend fun downloadAsPdf(file: CloudFile, dest: File, onProgress: ((Long, Long) -> Unit)?) = withContext(Dispatchers.IO) {
+        if (file.isPdf) return@withContext download(file, dest, onProgress)
         if (file.mimeType in CloudFile.GOOGLE_NATIVE_MIMES) return@withContext exportPdf(file.id, dest)
         // Office file: Drive converts it when copied into the matching Google format.
         val target = if (file.name.lowercase().let { it.endsWith(".docx") || it.endsWith(".doc") || it.endsWith(".odt") }) "application/vnd.google-apps.document"

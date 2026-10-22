@@ -347,6 +347,40 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
 
     fun zoomLevel() = zoom
 
+    /** Current reading position (logical page, fraction down the page, horizontal fraction, zoom). */
+    fun positionSnapshot(): com.notesplus.app.data.ReadingPosition? {
+        if (pageRects.isEmpty()) return null
+        val docY = offY / zoom + marginPx
+        var page = 0
+        for (i in pageRects.indices) if (pageRects[i].top <= docY) page = i
+        val r = pageRects[page]
+        val frac = ((docY - r.top) / r.height()).coerceIn(0f, 1f)
+        val maxX = max(1f, docWidth * zoom - width)
+        return com.notesplus.app.data.ReadingPosition(page, frac, (offX / maxX).coerceIn(0f, 1f), zoom)
+    }
+
+    /** Scrolls and zooms back to [pos]; ignored when the page no longer exists. */
+    fun restorePosition(pos: com.notesplus.app.data.ReadingPosition) {
+        val r = pageRects.getOrNull(pos.page) ?: return
+        scroller.forceFinished(true)
+        zoom = pos.zoom.coerceIn(minZoom, maxZoom)
+        offY = (r.top + pos.pageFraction * r.height() - marginPx) * zoom
+        offX = pos.xFraction * max(0f, docWidth * zoom - width)
+        clampOffsets()
+        invalidate()
+        schedulePatches()
+        notifyViewport(force = true)
+    }
+
+    /** Page sizes changed (measured in the background): rebuild the layout, keeping the position. */
+    fun pageSizesChanged() {
+        val pos = positionSnapshot()
+        renderer?.invalidateAll()
+        relayout()
+        pos?.let { restorePosition(it) }
+        invalidate()
+    }
+
     /** Fit the whole page on screen. */
     fun fitPage() { animateZoomTo(minZoom, width / 2f, height / 2f) }
 

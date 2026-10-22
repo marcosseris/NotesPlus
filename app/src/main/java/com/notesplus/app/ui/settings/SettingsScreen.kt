@@ -87,6 +87,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             Section("Sync")
             SwitchRow("Sync automatically", "Upload annotations a few seconds after you stop writing and check for changes every 15 minutes", ui.settings.autoSync, vm::setAutoSync)
+            SwitchRow("Pre-download on Wi-Fi", "Downloads up to 15 PDFs (40 MB each) of the folder you're browsing so they open instantly and work offline", ui.settings.prefetch, vm::setPrefetch)
             SwitchRow("Sync on mobile data", "Turn off to sync only on Wi-Fi", ui.settings.syncOnMeteredNetworks, vm::setMetered)
             Text("Show annotations on other devices", Modifier.padding(start = 16.dp, top = 12.dp, end = 16.dp), style = MaterialTheme.typography.titleSmall)
             Text("Your pen strokes always sync as a small file NotesPlus understands. This controls whether they are also baked into a PDF that any viewer can show.",

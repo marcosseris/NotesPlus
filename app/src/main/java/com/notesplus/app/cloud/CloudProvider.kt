@@ -57,14 +57,14 @@ interface CloudProvider {
     /** Finds a direct child by exact name (case-insensitive), or null. */
     suspend fun findChild(parentId: String, name: String): CloudFile?
 
-    suspend fun download(file: CloudFile, dest: File)
+    suspend fun download(file: CloudFile, dest: File, onProgress: ((Long, Long) -> Unit)? = null)
     suspend fun downloadText(file: CloudFile): String
 
     /**
      * Fetches [file] as a PDF: a plain download for PDFs, a server-side conversion for
      * PowerPoint / Word / Google Slides / Google Docs.
      */
-    suspend fun downloadAsPdf(file: CloudFile, dest: File)
+    suspend fun downloadAsPdf(file: CloudFile, dest: File, onProgress: ((Long, Long) -> Unit)? = null)
 
     /**
      * Creates or replaces a file. When [existingId] is given the file is updated in place;

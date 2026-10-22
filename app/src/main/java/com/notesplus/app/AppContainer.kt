@@ -24,6 +24,7 @@ import java.util.concurrent.TimeUnit
 /** Hand-rolled dependency graph; small enough not to need a DI framework. */
 class AppContainer(context: Context, appScope: CoroutineScope) {
     val prefs = Prefs(context)
+    val positions = com.notesplus.app.data.PositionStore(context)
     val http: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(120, TimeUnit.SECONDS)

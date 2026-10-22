@@ -87,6 +87,8 @@ class PdfExporter(private val context: Context, private val repo: NoteRepository
      * one (i.e. it was an annotated PDF written by this app).
      */
     suspend fun stripLayer(file: File): Boolean = withContext(Dispatchers.IO) {
+        // Parsing a large PDF is slow; only do it when the file was written by NotesPlus.
+        if (!Files.containsAny(file, listOf("/NotesPlusLayer", "/NotesPlusInsert"))) return@withContext false
         val changed = PDDocument.load(file).use { doc ->
             val removed = stripLayerIn(doc)
             if (removed) {

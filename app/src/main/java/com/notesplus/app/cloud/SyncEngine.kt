@@ -11,6 +11,8 @@ import com.notesplus.app.data.db.Provider
 import com.notesplus.app.export.PdfExporter
 import com.notesplus.app.ink.InkJson
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -68,43 +70,89 @@ class SyncEngine(
      * messages go to [onProgress]. Safe to call for an already-downloaded note: it then only
      * checks for remote changes.
      */
-    suspend fun prepareNote(item: CloudItemEntity, onProgress: (String) -> Unit = {}): NoteEntity = withContext(Dispatchers.IO) {
-        val provider = cloud.providers.getValue(item.provider)
-        val existing = repo.byRemote(item.provider, item.id)
-        val pathLabel = cloud.pathLabel(item.provider, item.parentId)
-        val remote = runCatching { provider.getFile(item.id) }.getOrNull()
-        val id = existing?.id ?: UUID.randomUUID().toString()
-        val pdf = repo.pdfFile(id)
+    private val prepareLocks = java.util.concurrent.ConcurrentHashMap<String, Mutex>()
 
-        val needDownload = existing == null || !pdf.exists() || (remote != null && remote.version != existing.pdfVersion)
-        if (needDownload) {
-            if (remote == null) {
-                if (existing != null && pdf.exists()) return@withContext existing
-                throw CloudException(404, null, "This file is no longer on ${item.provider.label}")
+    /**
+     * Makes [item] available locally and returns its note.
+     *
+     * A PDF already on the device is returned at once (no network); call [refreshOpened]
+     * afterwards to pick up remote changes in the background. Otherwise the PDF is downloaded,
+     * reporting progress through [onBytes]. Annotations are never fetched here: that also happens
+     * in [refreshOpened] and merges into an open editor live.
+     *
+     * [markOpened] = false is used for background pre-downloads, which stay out of Recent.
+     */
+    suspend fun prepareNote(
+        item: CloudItemEntity,
+        markOpened: Boolean = true,
+        onProgress: (String) -> Unit = {},
+        onBytes: ((Long, Long) -> Unit)? = null
+    ): NoteEntity = withContext(Dispatchers.IO) {
+        prepareLocks.getOrPut("${item.provider}:${item.id}") { Mutex() }.withLock {
+            val existing = repo.byRemote(item.provider, item.id)
+            val now = System.currentTimeMillis()
+            if (existing != null && repo.pdfFile(existing.id).exists() && existing.pageCount > 0) {
+                val n = if (markOpened) existing.copy(lastOpenedAt = now) else existing
+                if (markOpened) repo.update(n)
+                return@withLock n
             }
+            val provider = cloud.providers.getValue(item.provider)
+            val pathLabel = cloud.pathLabel(item.provider, item.parentId)
+            val remote = provider.getFile(item.id) ?: throw CloudException(404, null, "This file is no longer on ${item.provider.label}")
+            val id = existing?.id ?: UUID.randomUUID().toString()
+            val pdf = repo.pdfFile(id)
             val converting = !remote.isPdf
             onProgress(if (converting) "Converting ${item.name} to PDF…" else "Downloading ${item.name}…")
-            provider.downloadAsPdf(remote, pdf)
-            onProgress("Preparing pages…")
+            provider.downloadAsPdf(remote, pdf, onBytes)
             if (!converting) runCatching { exporter.stripLayer(pdf) }.onFailure { log("Could not inspect ${item.name} for an annotation layer: ${it.message}") }
+            repo.ensureInkFile(id)
+            val pages = repo.countPdfPages(pdf).coerceAtLeast(0)
+            val note = (existing ?: NoteEntity(
+                id = id, provider = item.provider, remoteId = item.id, parentId = item.parentId, fileName = item.name,
+                pathLabel = pathLabel, createdAt = now, modifiedAt = now, lastOpenedAt = 0L
+            )).copy(
+                fileName = remote.name, parentId = remote.parentId ?: item.parentId, pathLabel = pathLabel,
+                pageCount = pages, sizeBytes = remote.size, pdfVersion = remote.version, converted = converting,
+                lastOpenedAt = if (markOpened) now else (existing?.lastOpenedAt ?: 0L), syncError = null
+            )
+            repo.upsert(note)
+            note
         }
-        repo.ensureInkFile(id)
-        val pages = if (needDownload || existing?.pageCount == 0) repo.countPdfPages(pdf).coerceAtLeast(0) else existing.pageCount
-        val now = System.currentTimeMillis()
-        var note = (existing ?: NoteEntity(
-            id = id, provider = item.provider, remoteId = item.id, parentId = item.parentId, fileName = item.name,
-            pathLabel = pathLabel, createdAt = now, modifiedAt = now, lastOpenedAt = now
-        )).copy(
-            fileName = remote?.name ?: item.name, parentId = remote?.parentId ?: item.parentId, pathLabel = pathLabel,
-            pageCount = pages, sizeBytes = remote?.size ?: item.size, pdfVersion = remote?.version ?: existing?.pdfVersion,
-            converted = remote?.let { !it.isPdf } ?: existing?.converted ?: false,
-            lastOpenedAt = now, syncError = null
-        )
-        repo.upsert(note)
-        // Pick up annotations made elsewhere.
-        onProgress("Checking for annotations…")
-        note = runCatching { pullSidecar(provider, note) }.getOrElse { log("Could not check annotations for ${note.title}: ${it.message}"); note }
-        note
+    }
+
+    /**
+     * Background follow-up to [prepareNote]: downloads a newer PDF if the drive has one
+     * (announced through [NoteRepository.pdfReplaced]) and merges remote annotations.
+     */
+    suspend fun refreshOpened(noteId: String, checkPdf: Boolean = true) = withContext(Dispatchers.IO) {
+        val note = repo.get(noteId) ?: return@withContext
+        if (!cloud.isSignedIn(note.provider)) return@withContext
+        val provider = cloud.providers.getValue(note.provider)
+        try {
+            coroutineScope {
+                val pdfJob = if (checkPdf) async { refreshPdf(provider, note) } else null
+                val inkJob = async { pullSidecar(provider, note) }
+                pdfJob?.await(); inkJob.await()
+            }
+        } catch (e: Exception) {
+            log("Could not refresh ${note.title}: ${e.message}")
+        }
+    }
+
+    /** Replaces the local PDF when the drive has a different version. Returns true when it did. */
+    private suspend fun refreshPdf(provider: CloudProvider, note: NoteEntity): Boolean {
+        val remote = provider.getFile(note.remoteId) ?: return false
+        if (remote.version == null || remote.version == note.pdfVersion) return false
+        log("${note.title} changed on the drive; downloading")
+        val tmp = File(repo.noteDir(note.id), "incoming.pdf")
+        provider.downloadAsPdf(remote, tmp)
+        if (remote.isPdf) runCatching { exporter.stripLayer(tmp) }
+        if (!tmp.renameTo(repo.pdfFile(note.id))) { tmp.copyTo(repo.pdfFile(note.id), overwrite = true); tmp.delete() }
+        repo.thumbnailFile(note.id).delete()
+        val fresh = repo.get(note.id) ?: note
+        repo.update(fresh.copy(pdfVersion = remote.version, fileName = remote.name, sizeBytes = remote.size, pageCount = repo.countPdfPages(repo.pdfFile(note.id)).coerceAtLeast(0)))
+        repo.notifyPdfReplaced(note.id)
+        return true
     }
 
     /** Cache of ".ink" folder ids per document folder (provider:parentId -> folder id). */
@@ -123,13 +171,22 @@ class SyncEngine(
      * also at the old location next to the document; a sidecar found there is merged in and
      * scheduled to move (uploaded to .ink, then deleted) so nothing is ever lost.
      */
-    private suspend fun pullSidecar(provider: CloudProvider, note: NoteEntity): NoteEntity {
-        val parent = note.parentId ?: return note
+    private suspend fun pullSidecar(provider: CloudProvider, note: NoteEntity): NoteEntity = coroutineScope {
+        val parent = note.parentId ?: return@coroutineScope note
         var n = note
+        // Look in both places at once; the old location stops being checked once migrated.
+        val skipLegacy = prefs.current().inkFolderMigrated && n.inkRemoteId != null && n.legacyInkRemoteId == null
+        val legacyLookup = if (skipLegacy) null else async { provider.findChild(parent, n.inkFileName)?.takeIf { !it.isFolder } }
+        val inkLookup = async {
+            // Known sidecar id: one request instead of folder + name lookups.
+            n.inkRemoteId?.let { id -> runCatching { provider.getFile(id) }.getOrNull()?.takeIf { !it.isFolder && it.name.equals(n.inkFileName, true) } }
+                ?: inkFolder(provider, parent, create = false)?.let { folderId -> provider.findChild(folderId, n.inkFileName)?.takeIf { !it.isFolder } }
+        }
+        val legacy = legacyLookup?.await()
+        val remoteInkFound = inkLookup.await()
 
         // 1. Legacy sidecar next to the document (layout used before .ink).
-        val legacy = provider.findChild(parent, n.inkFileName)?.takeIf { !it.isFolder }
-        if (legacy != null) {
+        if (legacy != null && legacy.id != remoteInkFound?.id) {
             val alreadyKnown = legacy.id == n.inkRemoteId && legacy.version == n.inkVersion
             if (!alreadyKnown && legacy.id != n.legacyInkRemoteId) {
                 val doc = runCatching { InkJson.decode(provider.downloadText(legacy)) }.getOrNull()
@@ -146,17 +203,16 @@ class SyncEngine(
         }
 
         // 2. Sidecar in the .ink folder.
-        val folderId = inkFolder(provider, parent, create = false) ?: return n
-        val remoteInk = provider.findChild(folderId, n.inkFileName)?.takeIf { !it.isFolder } ?: return n
-        if (remoteInk.id == n.inkRemoteId && remoteInk.version != null && remoteInk.version == n.inkVersion) return n
+        val remoteInk = remoteInkFound ?: return@coroutineScope n
+        if (remoteInk.id == n.inkRemoteId && remoteInk.version != null && remoteInk.version == n.inkVersion) return@coroutineScope n
         val text = provider.downloadText(remoteInk)
-        val doc = runCatching { InkJson.decode(text) }.getOrElse { log("Ignoring unreadable ${remoteInk.name}"); return n }
+        val doc = runCatching { InkJson.decode(text) }.getOrElse { log("Ignoring unreadable ${remoteInk.name}"); return@coroutineScope n }
         val (_, localHadMore) = repo.mergeRemoteInk(n.id, doc)
         val fresh = repo.get(n.id) ?: n
         val updated = fresh.copy(inkRemoteId = remoteInk.id, inkVersion = remoteInk.version, inkDirty = fresh.inkDirty || localHadMore, lastSyncedAt = System.currentTimeMillis())
         repo.update(updated)
         log("Merged annotations for ${n.title}" + if (localHadMore) " (local additions will upload)" else "")
-        return updated
+        updated
     }
 
     // ------------------------------------------------------------------ sync
@@ -351,16 +407,8 @@ class SyncEngine(
             if (note.syncError == null) repo.setSyncError(note.id, "No longer on ${note.provider.label}")
             return false
         }
-        var n = note
-        if (remote.version != n.pdfVersion && remote.version != null) {
-            log("${note.title} changed on the drive; downloading")
-            provider.downloadAsPdf(remote, repo.pdfFile(n.id))
-            if (remote.isPdf) runCatching { exporter.stripLayer(repo.pdfFile(n.id)) }
-            repo.thumbnailFile(n.id).delete()
-            n = n.copy(pdfVersion = remote.version, fileName = remote.name, pageCount = repo.countPdfPages(repo.pdfFile(n.id)).coerceAtLeast(0), sizeBytes = remote.size)
-            repo.update(n)
-            changed = true
-        }
+        if (remote.version != note.pdfVersion && remote.version != null) changed = refreshPdf(provider, note)
+        var n = repo.get(note.id) ?: note
         val before = n.inkVersion
         n = pullSidecar(provider, n)
         return changed || n.inkVersion != before

@@ -38,30 +38,34 @@ class PdfPageSource(file: File) : PageSource {
     override val isPdf = true
     override val pageCount: Int get() = renderer.pageCount
 
+    /** Size of page 0, assumed for pages whose real size has not been read yet. */
+    private val guess: PageSize
+
     init {
         sizes = arrayOfNulls(renderer.pageCount)
+        guess = if (renderer.pageCount > 0) renderer.openPage(0).use { p -> PageSize(p.width.toFloat(), p.height.toFloat()).also { sizes[0] = it } } else PageSize.A4
     }
 
-    /** Reads every page size up front so layout is stable; cheap (no rasterisation). */
-    fun preloadSizes() {
-        synchronized(lock) {
-            for (i in sizes.indices) if (sizes[i] == null) {
+    /**
+     * Reads every page size (call off the main thread). Returns true when some page differs from
+     * the guess, i.e. the layout must be rebuilt. Takes the lock per page so rendering of the
+     * first pages is not held up.
+     */
+    fun preloadSizes(): Boolean {
+        var differs = false
+        for (i in sizes.indices) {
+            if (sizes[i] != null) continue
+            synchronized(lock) {
+                if (closed) return differs
                 renderer.openPage(i).use { p -> sizes[i] = PageSize(p.width.toFloat(), p.height.toFloat()) }
             }
+            if (sizes[i] != guess) differs = true
         }
+        return differs
     }
 
-    override fun pageSize(index: Int): PageSize {
-        sizes.getOrNull(index)?.let { return it }
-        synchronized(lock) {
-            sizes[index]?.let { return it }
-            renderer.openPage(index).use { p ->
-                val s = PageSize(p.width.toFloat(), p.height.toFloat())
-                sizes[index] = s
-                return s
-            }
-        }
-    }
+    /** Never blocks: pages not measured yet report the size of the first page. */
+    override fun pageSize(index: Int): PageSize = sizes.getOrNull(index) ?: guess
 
     override fun render(index: Int, bitmap: Bitmap, transform: Matrix, clip: Rect?) {
         synchronized(lock) {

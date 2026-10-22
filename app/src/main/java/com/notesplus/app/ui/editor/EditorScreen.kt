@@ -154,19 +154,26 @@ fun EditorScreen(noteId: String, onBack: () -> Unit) {
         vm.events.collect { ev ->
             when (ev) {
                 is EditorEvent.ExternalInk -> view?.mergeExternal(ev.doc)
+                is EditorEvent.SizesChanged -> view?.pageSizesChanged()
+                is EditorEvent.NewSource -> view?.let { v -> val pos = v.positionSnapshot(); v.setDocument(ev.source, ev.ink); pos?.let { v.restorePosition(it) } }
+                is EditorEvent.PdfUpdated -> {
+                    if (snackbar.showSnackbar("This PDF changed on your drive", actionLabel = "Reload", duration = androidx.compose.material3.SnackbarDuration.Long) ==
+                        androidx.compose.material3.SnackbarResult.ActionPerformed) vm.reloadPdf()
+                }
                 is EditorEvent.Message -> snackbar.showSnackbar(ev.text)
                 is EditorEvent.Share -> shareFile(context, ev.file)
             }
         }
     }
     DisposableEffect(lifecycleOwner) {
-        val obs = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_PAUSE) vm.flushNow() }
+        val obs = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_PAUSE) { vm.savePosition(view?.positionSnapshot()); vm.flushNow() } }
         lifecycleOwner.lifecycle.addObserver(obs)
         val window = (context as? ComponentActivity)?.window
         window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(obs)
             window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            vm.savePosition(view?.positionSnapshot())
             vm.flushNow()
         }
     }
@@ -186,7 +193,7 @@ fun EditorScreen(noteId: String, onBack: () -> Unit) {
             topBar = {
                 TopAppBar(
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-                    navigationIcon = { IconButton(onClick = { vm.flushNow(); onBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") } },
+                    navigationIcon = { IconButton(onClick = { vm.savePosition(view?.positionSnapshot()); vm.flushNow(); onBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") } },
                     title = {
                         Column {
                             Text(state.note?.title ?: "", maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
@@ -276,7 +283,7 @@ fun EditorScreen(noteId: String, onBack: () -> Unit) {
                                         override fun onToolShortcut(tool: DocumentView.Tool) = vm.setTool(tool)
                                         override fun onSelectionChanged(selected: Int, canPaste: Boolean) = vm.onSelectionChanged(selected, canPaste)
                                     }
-                                    vm.pageSource?.let { src -> v.post { v.setDocument(src, vm.initialInk) } }
+                                    vm.pageSource?.let { src -> v.post { v.setDocument(src, vm.initialInk); vm.initialPosition?.let { v.restorePosition(it) } } }
                                     view = v
                                 }
                             },

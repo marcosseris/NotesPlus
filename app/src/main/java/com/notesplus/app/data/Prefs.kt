@@ -46,6 +46,8 @@ data class Settings(
     val googleAccount: String? = null,
     val autoSync: Boolean = true,
     val syncOnMeteredNetworks: Boolean = true,
+    /** Download the PDFs of a folder in the background while you browse it (Wi-Fi only). */
+    val prefetch: Boolean = true,
     val writeBack: WriteBackMode = WriteBackMode.IN_PLACE,
     val fingerDrawing: Boolean = false,
     /** One finger does nothing on the page; scroll and zoom with two fingers (palm-proof). */
@@ -90,6 +92,7 @@ class Prefs(private val context: Context) {
         val gdAccount = stringPreferencesKey("google_account_name")
         val autoSync = booleanPreferencesKey("auto_sync")
         val metered = booleanPreferencesKey("sync_metered")
+        val prefetch = booleanPreferencesKey("prefetch")
         val writeBack = stringPreferencesKey("write_back_mode")
         val fingerDrawing = booleanPreferencesKey("finger_drawing")
         val palmGuard = booleanPreferencesKey("palm_guard")
@@ -124,6 +127,7 @@ class Prefs(private val context: Context) {
             googleAccount = p[K.gdAccount],
             autoSync = p[K.autoSync] ?: d.autoSync,
             syncOnMeteredNetworks = p[K.metered] ?: d.syncOnMeteredNetworks,
+            prefetch = p[K.prefetch] ?: d.prefetch,
             writeBack = p[K.writeBack]?.let { runCatching { WriteBackMode.valueOf(it) }.getOrNull() } ?: d.writeBack,
             fingerDrawing = p[K.fingerDrawing] ?: d.fingerDrawing,
             palmGuard = p[K.palmGuard] ?: d.palmGuard,
@@ -161,6 +165,7 @@ class Prefs(private val context: Context) {
     }
     suspend fun setAutoSync(v: Boolean) = context.dataStore.edit { it[K.autoSync] = v }
     suspend fun setSyncOnMetered(v: Boolean) = context.dataStore.edit { it[K.metered] = v }
+    suspend fun setPrefetch(v: Boolean) = context.dataStore.edit { it[K.prefetch] = v }
     suspend fun setWriteBack(v: WriteBackMode) = context.dataStore.edit { it[K.writeBack] = v.name }
     suspend fun setFingerDrawing(v: Boolean) = context.dataStore.edit { it[K.fingerDrawing] = v }
     suspend fun setPalmGuard(v: Boolean) = context.dataStore.edit { it[K.palmGuard] = v }

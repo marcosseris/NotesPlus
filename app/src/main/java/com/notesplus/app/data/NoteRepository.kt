@@ -41,6 +41,11 @@ class NoteRepository(
     /** Emits a note id whenever the sync engine changed that note's ink on disk. */
     val externalInkChanges = _externalInkChanges.asSharedFlow()
 
+    private val _pdfReplaced = MutableSharedFlow<String>(extraBufferCapacity = 16)
+    /** Emits a note id when a newer version of its PDF was downloaded in the background. */
+    val pdfReplaced = _pdfReplaced.asSharedFlow()
+    fun notifyPdfReplaced(id: String) { _pdfReplaced.tryEmit(id) }
+
     fun observeNotes(): Flow<List<NoteEntity>> = dao.observeAll()
     fun observeNote(id: String): Flow<NoteEntity?> = dao.observe(id)
     fun observeDirtyCount(): Flow<Int> = dao.observeDirtyCount()

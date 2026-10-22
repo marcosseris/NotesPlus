@@ -68,6 +68,7 @@ class SettingsViewModel(private val app: NotesPlusApp) : ViewModel() {
 
     fun saveClientId(p: Provider, id: String) = viewModelScope.launch { c.prefs.setClientIdOverride(p, id); _messages.tryEmit("Client ID saved") }
     fun setAutoSync(v: Boolean) = viewModelScope.launch { c.prefs.setAutoSync(v); c.syncScheduler.ensurePeriodic() }
+    fun setPrefetch(v: Boolean) = viewModelScope.launch { c.prefs.setPrefetch(v) }
     fun setMetered(v: Boolean) = viewModelScope.launch { c.prefs.setSyncOnMetered(v); c.syncScheduler.ensurePeriodic() }
     fun setWriteBack(v: WriteBackMode) = viewModelScope.launch { c.prefs.setWriteBack(v) }
     fun setFingerDrawing(v: Boolean) = viewModelScope.launch { c.prefs.setFingerDrawing(v) }

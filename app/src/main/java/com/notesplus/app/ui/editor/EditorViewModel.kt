@@ -67,6 +67,12 @@ data class EditorState(
 )
 
 sealed class EditorEvent {
+    /** The PDF changed on the drive and the new version is on the device. */
+    data object PdfUpdated : EditorEvent()
+    /** A freshly opened page source replaces the current one (after a reload). */
+    data class NewSource(val source: PageSource, val ink: InkDocument) : EditorEvent()
+    /** Page sizes were measured in the background and differ from the first page. */
+    data object SizesChanged : EditorEvent()
     data class ExternalInk(val doc: InkDocument) : EditorEvent()
     data class Message(val text: String) : EditorEvent()
     data class Share(val file: File) : EditorEvent()
@@ -86,6 +92,9 @@ class EditorViewModel(private val app: NotesPlusApp, private val noteId: String)
         private set
     var initialInk: InkDocument = InkDocument()
         private set
+    /** Where the reader was when the document was last closed. */
+    var initialPosition: com.notesplus.app.data.ReadingPosition? = null
+        private set
 
     private var latest: InkDocument? = null
     private var saveJob: Job? = null
@@ -99,6 +108,7 @@ class EditorViewModel(private val app: NotesPlusApp, private val noteId: String)
             }
         }
         viewModelScope.launch { c.syncEngine.status.collect { s -> _state.update { it.copy(sync = s) } } }
+        viewModelScope.launch { repo.pdfReplaced.filter { it == noteId }.collect { _events.emit(EditorEvent.PdfUpdated) } }
         viewModelScope.launch { repo.observeNote(noteId).collect { n -> if (n != null) _state.update { it.copy(note = n) } } }
         viewModelScope.launch {
             val s = c.prefs.current()
@@ -120,9 +130,11 @@ class EditorViewModel(private val app: NotesPlusApp, private val noteId: String)
         try {
             val note = repo.get(noteId) ?: run { _state.update { it.copy(loading = false, error = "Note not found") }; return }
             val ink = repo.loadInk(noteId)
-            val source: PageSource = withContext(Dispatchers.IO) {
-                CompositePageSource(PdfPageSource(repo.pdfFile(noteId)).also { it.preloadSizes() }).also { it.setInserts(ink.orderedInserts()) }
-            }
+            val pdfSource = withContext(Dispatchers.IO) { PdfPageSource(repo.pdfFile(noteId)) }
+            val source: PageSource = CompositePageSource(pdfSource).also { it.setInserts(ink.orderedInserts()) }
+            initialPosition = c.positions.get(note)
+            // Measure the remaining pages without holding up the first render.
+            viewModelScope.launch(Dispatchers.IO) { if (pdfSource.preloadSizes()) _events.emit(EditorEvent.SizesChanged) }
             c.syncEngine.markOpen(noteId)
             repo.touchOpened(noteId)
             pageSource = source
@@ -165,6 +177,28 @@ class EditorViewModel(private val app: NotesPlusApp, private val noteId: String)
         if (doc != null && _state.value.unsaved) {
             _state.update { it.copy(unsaved = false) }
             app.appScope.launch { repo.saveInk(noteId, doc) }
+        }
+    }
+
+    fun savePosition(pos: com.notesplus.app.data.ReadingPosition?) {
+        val note = _state.value.note ?: return
+        if (pos != null) c.positions.put(note, pos)
+    }
+
+    /** Opens the newer PDF that arrived in the background. */
+    fun reloadPdf() = viewModelScope.launch {
+        try {
+            flush()
+            val ink = repo.loadInk(noteId)
+            val pdfSource = withContext(Dispatchers.IO) { PdfPageSource(repo.pdfFile(noteId)).also { it.preloadSizes() } }
+            val source = CompositePageSource(pdfSource).also { it.setInserts(ink.orderedInserts()) }
+            pageSource = source
+            latest = ink
+            _state.update { it.copy(pageCount = source.pageCount) }
+            invalidatePageThumbnails()
+            _events.emit(EditorEvent.NewSource(source, ink))
+        } catch (e: Exception) {
+            _events.emit(EditorEvent.Message("Could not reload: ${e.message}"))
         }
     }
 

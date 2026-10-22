@@ -7,6 +7,9 @@ show up on your computer too.
 * **Drive browser** – sign in to OneDrive and/or Google Drive, browse folders (cached, so it
   is instant and works offline), open any PDF. Google Drive shows My Drive, Shared with me
   and Shared drives.
+* **Fast opening** – PDFs already on the tablet open instantly and are checked for updates in
+  the background; downloads show progress; folders you browse are pre-downloaded on Wi-Fi.
+  Each document reopens where you left it (page, scroll and zoom).
 * **Add PDFs** – upload a PDF from the device or create a blank one (ruled, grid, dotted or
   plain) straight into the folder you're browsing; it opens ready to write on.
 * **PowerPoint and Word too** – `.pptx`, `.ppt`, `.docx`, `.doc` (and Google Slides / Docs) are
