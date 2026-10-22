@@ -6,7 +6,7 @@ import org.junit.Test
 import java.io.File
 
 class FilesTest {
-    private fun fileWith(bytes: ByteArray) = File.createTempFile("np", ".pdf").apply { writeBytes(bytes); deleteOnExit() }
+    private fun fileWith(bytes: ByteArray) = File.createTempFile("notesplus", ".pdf").apply { writeBytes(bytes); deleteOnExit() }
 
     @Test
     fun `finds a marker that straddles the read buffer boundary`() {
