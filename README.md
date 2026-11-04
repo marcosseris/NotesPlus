@@ -19,7 +19,7 @@ show up on your computer too.
 * **Stylus-first inking** – pressure-sensitive pen, highlighter (multiply blend, auto-straight
   bars), stroke eraser, undo/redo, palm rejection, side-button erase, finger pan/zoom,
   platform motion prediction so ink keeps up with the pen tip.
-* **Colours** – 16 pen inks and 10 highlighter colours on the rail, plus a full colour picker
+* **Colours** – 16 pen inks and 10 highlighter colours in the tool bar, plus a full colour picker
   with recent colours.
 * **Lasso** – circle ink to select it, drag to move it, copy / cut / paste (also between PDFs)
   or delete it; Ctrl+C / X / V and Delete work with a keyboard.
@@ -35,8 +35,11 @@ show up on your computer too.
   ink on a separate, marked layer. Any viewer shows it; Acrobat lets you hide the layer. The
   original pages stay inside the file untouched, so NotesPlus can always recover the pristine
   PDF (and you can switch to a sibling `*.annotated.pdf` or turn write-back off in Settings).
-* **Tablet UI** – floating tool rail, page navigator and keyboard shortcuts on 600 dp+ screens
-  (the Honor Pad 9 in both orientations); bottom bar on phones. 120 Hz where available.
+* **Tool bar on top** – tools, colours and widths sit in the top bar next to the document name;
+  page navigator and keyboard shortcuts on 600 dp+ screens (the Honor Pad 9 in both orientations).
+  120 Hz where available.
+* **Minimum pen pressure** – for pens that draw while hovering: Settings → Pen & touch →
+  Calibrate measures hover vs. writing pressure and only lets real pressure draw.
 * **Self-updating** – every push to the default branch publishes a signed build to GitHub
   Releases; the app installs new builds by itself.
 

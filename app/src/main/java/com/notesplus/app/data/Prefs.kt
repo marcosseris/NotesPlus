@@ -65,6 +65,8 @@ data class Settings(
     val lastShape: Int = 0,
     val motionPrediction: Boolean = true,
     val straightHighlighter: Boolean = true,
+    /** Pen pressure (0..1) below which stylus contact is ignored; 0 = off. For pens that touch down while hovering. */
+    val minPenPressure: Float = 0f,
     val recentColors: List<Int> = emptyList(),
     /** User-editable palettes shown on the rail and in the picker. */
     val penPalette: List<Int> = DEFAULT_PEN_PALETTE,
@@ -109,6 +111,7 @@ class Prefs(private val context: Context) {
         val lastShape = intPreferencesKey("last_shape")
         val motionPrediction = booleanPreferencesKey("motion_prediction")
         val straightHighlighter = booleanPreferencesKey("straight_highlighter")
+        val minPenPressure = floatPreferencesKey("min_pen_pressure")
         val recentColors = stringPreferencesKey("recent_colors")
         val penPalette = stringPreferencesKey("pen_palette")
         val hlPalette = stringPreferencesKey("hl_palette")
@@ -144,6 +147,7 @@ class Prefs(private val context: Context) {
             lastShape = p[K.lastShape] ?: d.lastShape,
             motionPrediction = p[K.motionPrediction] ?: d.motionPrediction,
             straightHighlighter = p[K.straightHighlighter] ?: d.straightHighlighter,
+            minPenPressure = p[K.minPenPressure] ?: d.minPenPressure,
             recentColors = p[K.recentColors]?.split(',')?.mapNotNull { it.toLongOrNull()?.toInt() } ?: emptyList(),
             penPalette = p[K.penPalette]?.toColorList()?.takeIf { it.isNotEmpty() } ?: DEFAULT_PEN_PALETTE,
             highlighterPalette = p[K.hlPalette]?.toColorList()?.takeIf { it.isNotEmpty() } ?: DEFAULT_HIGHLIGHTER_PALETTE,
@@ -179,6 +183,7 @@ class Prefs(private val context: Context) {
     suspend fun setLastShape(v: Int) = context.dataStore.edit { it[K.lastShape] = v }
     suspend fun setMotionPrediction(v: Boolean) = context.dataStore.edit { it[K.motionPrediction] = v }
     suspend fun setStraightHighlighter(v: Boolean) = context.dataStore.edit { it[K.straightHighlighter] = v }
+    suspend fun setMinPenPressure(v: Float) = context.dataStore.edit { it[K.minPenPressure] = v.coerceIn(0f, 0.9f) }
     suspend fun setPenPalette(colors: List<Int>) = context.dataStore.edit { it[K.penPalette] = colors.joinToString(",") { c -> c.toLong().toString() } }
     suspend fun setHighlighterPalette(colors: List<Int>) = context.dataStore.edit { it[K.hlPalette] = colors.joinToString(",") { c -> c.toLong().toString() } }
     suspend fun setInsertPaper(v: PaperStyle) = context.dataStore.edit { it[K.insertPaper] = v.name }

@@ -56,6 +56,7 @@ data class EditorState(
     val railOnRight: Boolean = false,
     val motionPrediction: Boolean = true,
     val straightHighlighter: Boolean = true,
+    val minPenPressure: Float = 0f,
     val recentColors: List<Int> = emptyList(),
     val penPalette: List<Int> = DEFAULT_PEN_PALETTE,
     val highlighterPalette: List<Int> = DEFAULT_HIGHLIGHTER_PALETTE,
@@ -118,7 +119,7 @@ class EditorViewModel(private val app: NotesPlusApp, private val noteId: String)
                     eraserRadius = s.eraserRadius, fingerDraws = s.fingerDrawing, stylusButtonErases = s.stylusButtonErases,
                     palmGuard = s.palmGuard,
                     autoShape = s.autoShape, railOnRight = s.railOnRight, motionPrediction = s.motionPrediction,
-                    straightHighlighter = s.straightHighlighter, recentColors = s.recentColors,
+                    straightHighlighter = s.straightHighlighter, minPenPressure = s.minPenPressure, recentColors = s.recentColors,
                     penPalette = s.penPalette, highlighterPalette = s.highlighterPalette, insertPaper = s.insertPaper,
                     shapeKind = ShapeKind.entries.getOrElse(s.lastShape) { ShapeKind.LINE }
                 )

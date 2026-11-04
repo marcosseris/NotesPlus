@@ -22,7 +22,6 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -30,13 +29,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.DeleteSweep
@@ -75,6 +74,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -86,7 +86,6 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -193,81 +192,79 @@ fun EditorScreen(noteId: String, onBack: () -> Unit) {
         val wide = maxWidth >= WIDE_LAYOUT_MIN_WIDTH
         Scaffold(
             topBar = {
-                TopAppBar(
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-                    navigationIcon = { IconButton(onClick = { vm.savePosition(view?.positionSnapshot()); vm.flushNow(); onBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") } },
-                    title = {
-                        Column {
-                            Text(state.note?.title ?: "", maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                (state.note?.pathLabel ?: "") + " · ${state.pageCount} page${if (state.pageCount == 1) "" else "s"}" +
-                                    if (state.zoom > 1.05f) " · ${(state.zoom * 100).toInt()}%" else "",
-                                maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
+                Row(
+                    Modifier.fillMaxWidth().windowInsetsPadding(TopAppBarDefaults.windowInsets).padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = { vm.savePosition(view?.positionSnapshot()); vm.flushNow(); onBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
+                    Column(Modifier.weight(1f)) {
+                        // The document name sits where the folder path used to be; the tools take the title's place.
+                        Text(
+                            (state.note?.title ?: "") + " · ${state.pageCount} page${if (state.pageCount == 1) "" else "s"}" +
+                                if (state.zoom > 1.05f) " · ${(state.zoom * 100).toInt()}%" else "",
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 6.dp)
+                        )
+                        TopToolBar(
+                            state, view, showWidths = wide, selectTool, selectColor, selectWidth, onShape = vm::setShapeKind,
+                            onMoreColors = { editSlot = null; showColorPicker = true }, onEditSlot = { editSlot = it; showColorPicker = true }
+                        )
+                    }
+                    IconButton(onClick = { vm.togglePages() }) {
+                        Icon(Icons.AutoMirrored.Filled.ViewSidebar, contentDescription = "Pages", tint = if (state.showPages) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                    }
+                    SyncIndicator(state, onClick = { vm.syncNow() })
+                    Box {
+                        IconButton(onClick = { currentIsInsert = view?.isInsertedPage(state.currentPage) == true; menu = true }) { Icon(Icons.Default.MoreVert, contentDescription = "More") }
+                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Insert blank page above") }, leadingIcon = { Icon(Icons.AutoMirrored.Filled.PlaylistAdd, null) },
+                                onClick = { menu = false; view?.insertBlankPage(above = true, paper = state.insertPaper); vm.invalidatePageThumbnails() }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Insert blank page below") }, leadingIcon = { Icon(Icons.AutoMirrored.Filled.PlaylistAdd, null) },
+                                onClick = { menu = false; view?.insertBlankPage(above = false, paper = state.insertPaper); vm.invalidatePageThumbnails() }
+                            )
+                            if (currentIsInsert) DropdownMenuItem(
+                                text = { Text("Remove this inserted page") }, leadingIcon = { Icon(Icons.Default.PlaylistRemove, null) },
+                                onClick = { menu = false; view?.removeInsertedPage(state.currentPage); vm.invalidatePageThumbnails() }
+                            )
+                            HorizontalDivider()
+                            DropdownMenuItem(text = { Text("Go to page…") }, onClick = { menu = false; showJump = true })
+                            DropdownMenuItem(text = { Text("Fit page") }, leadingIcon = { Icon(Icons.Default.FitScreen, null) }, onClick = { menu = false; view?.fitPage() })
+                            DropdownMenuItem(text = { Text("Fit width") }, onClick = { menu = false; view?.fitWidth() })
+                            DropdownMenuItem(text = { Text("Share annotated PDF") }, onClick = { menu = false; vm.export() })
+                            DropdownMenuItem(
+                                text = { Text("Remove all annotations…") }, leadingIcon = { Icon(Icons.Default.DeleteSweep, null) },
+                                enabled = state.strokeCount > 0, onClick = { menu = false; showClearAll = true }
+                            )
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text(if (state.autoShape) "Shape snapping: on" else "Shape snapping: off") },
+                                leadingIcon = { Icon(Icons.Default.Category, null) },
+                                onClick = { menu = false; vm.setAutoShape(!state.autoShape) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(if (state.palmGuard) "Palm guard: on (two-finger scroll)" else "Palm guard: off") },
+                                leadingIcon = { Icon(Icons.Default.FrontHand, null) },
+                                onClick = { menu = false; vm.setPalmGuard(!state.palmGuard) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(if (state.fingerDraws) "Finger: draws" else "Finger: scrolls") },
+                                leadingIcon = { Icon(Icons.Default.TouchApp, null) },
+                                onClick = { menu = false; vm.setFingerDraws(!state.fingerDraws) }
                             )
                         }
-                    },
-                    actions = {
-                        if (!wide) {
-                            IconButton(onClick = { view?.undo() }, enabled = state.canUndo) { Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Undo") }
-                            IconButton(onClick = { view?.redo() }, enabled = state.canRedo) { Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = "Redo") }
-                        }
-                        IconButton(onClick = { vm.togglePages() }) {
-                            Icon(Icons.AutoMirrored.Filled.ViewSidebar, contentDescription = "Pages", tint = if (state.showPages) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
-                        }
-                        SyncIndicator(state, onClick = { vm.syncNow() })
-                        Box {
-                            IconButton(onClick = { currentIsInsert = view?.isInsertedPage(state.currentPage) == true; menu = true }) { Icon(Icons.Default.MoreVert, contentDescription = "More") }
-                            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                                DropdownMenuItem(
-                                    text = { Text("Insert blank page above") }, leadingIcon = { Icon(Icons.AutoMirrored.Filled.PlaylistAdd, null) },
-                                    onClick = { menu = false; view?.insertBlankPage(above = true, paper = state.insertPaper); vm.invalidatePageThumbnails() }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Insert blank page below") }, leadingIcon = { Icon(Icons.AutoMirrored.Filled.PlaylistAdd, null) },
-                                    onClick = { menu = false; view?.insertBlankPage(above = false, paper = state.insertPaper); vm.invalidatePageThumbnails() }
-                                )
-                                if (currentIsInsert) DropdownMenuItem(
-                                    text = { Text("Remove this inserted page") }, leadingIcon = { Icon(Icons.Default.PlaylistRemove, null) },
-                                    onClick = { menu = false; view?.removeInsertedPage(state.currentPage); vm.invalidatePageThumbnails() }
-                                )
-                                HorizontalDivider()
-                                DropdownMenuItem(text = { Text("Go to page…") }, onClick = { menu = false; showJump = true })
-                                DropdownMenuItem(text = { Text("Fit page") }, leadingIcon = { Icon(Icons.Default.FitScreen, null) }, onClick = { menu = false; view?.fitPage() })
-                                DropdownMenuItem(text = { Text("Fit width") }, onClick = { menu = false; view?.fitWidth() })
-                                DropdownMenuItem(text = { Text("Share annotated PDF") }, onClick = { menu = false; vm.export() })
-                                DropdownMenuItem(
-                                    text = { Text("Remove all annotations…") }, leadingIcon = { Icon(Icons.Default.DeleteSweep, null) },
-                                    enabled = state.strokeCount > 0, onClick = { menu = false; showClearAll = true }
-                                )
-                                HorizontalDivider()
-                                DropdownMenuItem(
-                                    text = { Text(if (state.autoShape) "Shape snapping: on" else "Shape snapping: off") },
-                                    leadingIcon = { Icon(Icons.Default.Category, null) },
-                                    onClick = { menu = false; vm.setAutoShape(!state.autoShape) }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text(if (state.palmGuard) "Palm guard: on (two-finger scroll)" else "Palm guard: off") },
-                                    leadingIcon = { Icon(Icons.Default.FrontHand, null) },
-                                    onClick = { menu = false; vm.setPalmGuard(!state.palmGuard) }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text(if (state.fingerDraws) "Finger: draws" else "Finger: scrolls") },
-                                    leadingIcon = { Icon(Icons.Default.TouchApp, null) },
-                                    onClick = { menu = false; vm.setFingerDraws(!state.fingerDraws) }
-                                )
-                            }
-                        }
                     }
-                )
+                }
+                }
             },
             snackbarHost = { SnackbarHost(snackbar) },
             bottomBar = {
-                if (!wide) Column {
-                    AnimatedVisibility(state.showPages && !state.loading, enter = slideInVertically { it } + fadeIn(), exit = slideOutVertically { it } + fadeOut()) {
-                        PagesStrip(vm, state, onPage = { view?.scrollToPage(it) })
-                    }
-                    BottomToolBar(state, selectTool, selectColor, onShape = vm::setShapeKind, onMoreColors = { editSlot = null; showColorPicker = true }, onEditSlot = { editSlot = it; showColorPicker = true })
+                if (!wide) AnimatedVisibility(state.showPages && !state.loading, enter = slideInVertically { it } + fadeIn(), exit = slideOutVertically { it } + fadeOut()) {
+                    PagesStrip(vm, state, onPage = { view?.scrollToPage(it) })
                 }
             }
         ) { padding ->
@@ -301,17 +298,15 @@ fun EditorScreen(noteId: String, onBack: () -> Unit) {
                                 v.motionPrediction = state.motionPrediction
                                 v.straightHighlighter = state.straightHighlighter
                                 v.palmGuard = state.palmGuard
+                                v.minPenPressure = state.minPenPressure
                             },
                             modifier = Modifier.fillMaxSize()
                         )
                         DisposableEffect(Unit) { onDispose { view?.release(); view = null } }
 
                         if (wide) {
-                            val railAlign = if (state.railOnRight) Alignment.CenterEnd else Alignment.CenterStart
+                            // "railOnRight" now only means: page navigator on the left.
                             val panelAlign = if (state.railOnRight) Alignment.CenterStart else Alignment.CenterEnd
-                            Box(Modifier.align(railAlign).padding(10.dp)) {
-                                FloatingToolRail(state, view, selectTool, selectColor, selectWidth, onShape = vm::setShapeKind, onMoreColors = { editSlot = null; showColorPicker = true }, onEditSlot = { editSlot = it; showColorPicker = true })
-                            }
                             PagesPanel(vm, state, visible = state.showPages, fromRight = !state.railOnRight, onPage = { view?.scrollToPage(it) }, modifier = Modifier.align(panelAlign))
                         }
                         SelectionBar(
@@ -322,7 +317,7 @@ fun EditorScreen(noteId: String, onBack: () -> Unit) {
                         )
                         PagePill(state, onPrev = { view?.scrollToPage(state.currentPage - 1) }, onNext = { view?.scrollToPage(state.currentPage + 1) }, onJump = { showJump = true },
                             modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp))
-                        OptionsPanel(state, vm, visible = showOptions, onClose = { showOptions = false }, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 64.dp))
+                        OptionsPanel(state, vm, visible = showOptions, onClose = { showOptions = false }, modifier = Modifier.align(Alignment.TopCenter))
                     }
                 }
             }
@@ -449,80 +444,46 @@ private fun quickColors(palette: List<Int>, current: Int): List<Pair<Int, Int>> 
     return if (quick.any { it.second == current } || palette.indexOf(current) >= 0) quick else listOf(-1 to current) + quick.dropLast(1)
 }
 
-/** Floating pill rail for tablets: everything reachable with the pen without leaving the page. */
+/** The tool bar in the top bar: undo/redo, tools, colours and (on wide screens) widths in one scrollable row. */
 @Composable
-private fun FloatingToolRail(
-    state: EditorState, view: DocumentView?,
+private fun TopToolBar(
+    state: EditorState, view: DocumentView?, showWidths: Boolean,
     onTool: (DocumentView.Tool) -> Unit, onColor: (Int) -> Unit, onWidth: (Float) -> Unit,
     onShape: (ShapeKind) -> Unit, onMoreColors: () -> Unit, onEditSlot: (Int) -> Unit
 ) {
-    Surface(shape = RoundedCornerShape(26.dp), tonalElevation = 4.dp, shadowElevation = 8.dp, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
-        Column(
-            Modifier.width(60.dp).verticalScroll(rememberScrollState()).padding(vertical = 10.dp),
-            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)
-        ) {
-            IconButton(onClick = { view?.undo() }, enabled = state.canUndo) { Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Undo") }
-            IconButton(onClick = { view?.redo() }, enabled = state.canRedo) { Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = "Redo") }
-            RailDivider()
-            ToolButton(Icons.Default.Draw, "Pen (P)", state.tool == DocumentView.Tool.PEN) { onTool(DocumentView.Tool.PEN) }
-            ToolButton(Icons.Default.BorderColor, "Highlighter (H)", state.tool == DocumentView.Tool.HIGHLIGHTER) { onTool(DocumentView.Tool.HIGHLIGHTER) }
-            ToolButton(Icons.Default.AutoFixNormal, "Eraser (E)", state.tool == DocumentView.Tool.ERASER) { onTool(DocumentView.Tool.ERASER) }
-            ShapeToolButton(state, onTool, onShape)
-            ToolButton(Icons.Default.HighlightAlt, "Lasso select (L)", state.tool == DocumentView.Tool.LASSO) { onTool(DocumentView.Tool.LASSO) }
-            ToolButton(Icons.Default.PanTool, "Pan / zoom (Space)", state.tool == DocumentView.Tool.PAN) { onTool(DocumentView.Tool.PAN) }
-            val inkTool = state.tool == DocumentView.Tool.PEN || state.tool == DocumentView.Tool.HIGHLIGHTER || state.tool == DocumentView.Tool.SHAPE
-            AnimatedVisibility(inkTool) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    RailDivider()
-                    val hl = state.tool == DocumentView.Tool.HIGHLIGHTER
-                    val selected = if (hl) state.highlighterColor else state.penColor
-                    quickColors(if (hl) state.highlighterPalette else state.penPalette, selected).forEach { (i, c) ->
-                        ColorSwatch(c, c == selected, onLongClick = if (i >= 0) ({ onEditSlot(i) }) else null) { onColor(c) }
-                    }
-                    MoreColorsButton(onMoreColors)
-                    RailDivider()
-                    val widths = if (hl) HL_WIDTHS else PEN_WIDTHS
-                    val cur = if (hl) state.highlighterWidth else state.penWidth
-                    widths.forEach { w -> WidthDot(w, kotlin.math.abs(w - cur) < 0.05f, widths.last()) { onWidth(w) } }
-                }
+    Row(
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        IconButton(onClick = { view?.undo() }, enabled = state.canUndo) { Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Undo") }
+        IconButton(onClick = { view?.redo() }, enabled = state.canRedo) { Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = "Redo") }
+        BarDivider()
+        ToolButton(Icons.Default.Draw, "Pen (P)", state.tool == DocumentView.Tool.PEN) { onTool(DocumentView.Tool.PEN) }
+        ToolButton(Icons.Default.BorderColor, "Highlighter (H)", state.tool == DocumentView.Tool.HIGHLIGHTER) { onTool(DocumentView.Tool.HIGHLIGHTER) }
+        ToolButton(Icons.Default.AutoFixNormal, "Eraser (E)", state.tool == DocumentView.Tool.ERASER) { onTool(DocumentView.Tool.ERASER) }
+        ShapeToolButton(state, onTool, onShape)
+        ToolButton(Icons.Default.HighlightAlt, "Lasso select (L)", state.tool == DocumentView.Tool.LASSO) { onTool(DocumentView.Tool.LASSO) }
+        ToolButton(Icons.Default.PanTool, "Pan / zoom (Space)", state.tool == DocumentView.Tool.PAN) { onTool(DocumentView.Tool.PAN) }
+        val hl = state.tool == DocumentView.Tool.HIGHLIGHTER
+        if (state.tool == DocumentView.Tool.PEN || hl || state.tool == DocumentView.Tool.SHAPE) {
+            BarDivider()
+            val selected = if (hl) state.highlighterColor else state.penColor
+            quickColors(if (hl) state.highlighterPalette else state.penPalette, selected).forEach { (i, c) ->
+                ColorSwatch(c, c == selected, onLongClick = if (i >= 0) ({ onEditSlot(i) }) else null) { onColor(c) }
             }
-            RailDivider()
-            IconButton(onClick = { view?.fitPage() }) { Icon(Icons.Default.FitScreen, contentDescription = "Fit page") }
+            MoreColorsButton(onMoreColors)
+            if (showWidths) {
+                BarDivider()
+                val widths = if (hl) HL_WIDTHS else PEN_WIDTHS
+                val cur = if (hl) state.highlighterWidth else state.penWidth
+                widths.forEach { w -> WidthDot(w, kotlin.math.abs(w - cur) < 0.05f, widths.last()) { onWidth(w) } }
+            }
         }
     }
 }
 
 @Composable
-private fun RailDivider() = HorizontalDivider(Modifier.padding(horizontal = 14.dp, vertical = 5.dp), color = MaterialTheme.colorScheme.outlineVariant)
-
-@Composable
-private fun BottomToolBar(
-    state: EditorState, onTool: (DocumentView.Tool) -> Unit, onColor: (Int) -> Unit,
-    onShape: (ShapeKind) -> Unit, onMoreColors: () -> Unit, onEditSlot: (Int) -> Unit
-) {
-    Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
-        Row(
-            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            ToolButton(Icons.Default.Draw, "Pen", state.tool == DocumentView.Tool.PEN) { onTool(DocumentView.Tool.PEN) }
-            ToolButton(Icons.Default.BorderColor, "Highlighter", state.tool == DocumentView.Tool.HIGHLIGHTER) { onTool(DocumentView.Tool.HIGHLIGHTER) }
-            ToolButton(Icons.Default.AutoFixNormal, "Eraser", state.tool == DocumentView.Tool.ERASER) { onTool(DocumentView.Tool.ERASER) }
-            ShapeToolButton(state, onTool, onShape)
-            ToolButton(Icons.Default.HighlightAlt, "Lasso select", state.tool == DocumentView.Tool.LASSO) { onTool(DocumentView.Tool.LASSO) }
-            ToolButton(Icons.Default.PanTool, "Pan / zoom", state.tool == DocumentView.Tool.PAN) { onTool(DocumentView.Tool.PAN) }
-            val hl = state.tool == DocumentView.Tool.HIGHLIGHTER
-            if (state.tool == DocumentView.Tool.PEN || hl || state.tool == DocumentView.Tool.SHAPE) {
-                Spacer(Modifier.width(6.dp))
-                val selected = if (hl) state.highlighterColor else state.penColor
-                quickColors(if (hl) state.highlighterPalette else state.penPalette, selected).forEach { (i, c) ->
-                    ColorSwatch(c, c == selected, onLongClick = if (i >= 0) ({ onEditSlot(i) }) else null) { onColor(c) }
-                }
-                MoreColorsButton(onMoreColors)
-            }
-        }
-    }
-}
+private fun BarDivider() = VerticalDivider(Modifier.height(28.dp).padding(horizontal = 6.dp), color = MaterialTheme.colorScheme.outlineVariant)
 
 /** Actions for the lasso selection: copy, cut, paste, delete. */
 @Composable
@@ -561,7 +522,7 @@ private fun PagePill(state: EditorState, onPrev: () -> Unit, onNext: () -> Unit,
 
 @Composable
 private fun OptionsPanel(state: EditorState, vm: EditorViewModel, visible: Boolean, onClose: () -> Unit, modifier: Modifier) {
-    AnimatedVisibility(visible, modifier = modifier, enter = slideInVertically { it / 2 } + fadeIn(), exit = slideOutVertically { it / 2 } + fadeOut()) {
+    AnimatedVisibility(visible, modifier = modifier, enter = slideInVertically { -it / 2 } + fadeIn(), exit = slideOutVertically { -it / 2 } + fadeOut()) {
         Surface(modifier = Modifier.padding(12.dp).width(360.dp), shape = MaterialTheme.shapes.large, tonalElevation = 6.dp, shadowElevation = 8.dp, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
             Column(Modifier.padding(horizontal = 20.dp, vertical = 14.dp)) {
                 when (state.tool) {

@@ -94,6 +94,12 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
     var motionPrediction: Boolean = true
     /** Replace roughly straight highlighter strokes with a perfectly straight one on lift. */
     var straightHighlighter: Boolean = true
+    /**
+     * Pen pressure (0..1) a stylus must reach before it draws; 0 = off. Works around pens whose
+     * pressure sensor reports contact while merely hovering. A stroke ends again when pressure
+     * drops well below the threshold.
+     */
+    var minPenPressure: Float = 0f
 
     // ----------------------------------------------------------------- document
     private var source: PageSource? = null
@@ -137,6 +143,9 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
 
     // ----------------------------------------------------------------- input state
     private var drawingPointerId = -1
+    /** Stylus that is "down" but below [minPenPressure]: waiting for real pressure before drawing. */
+    private var pendingStylusId = -1
+    private var pendingErase = false
     private var drawingIsStylus = false
     private var drawingPage = -1
     private var drawingMode = ToolType.PEN
@@ -696,6 +705,13 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
                     val erase = toolType == MotionEvent.TOOL_TYPE_ERASER ||
                         tool == Tool.ERASER ||
                         (stylusButtonErases && (ev.buttonState and (MotionEvent.BUTTON_STYLUS_PRIMARY or MotionEvent.BUTTON_SECONDARY)) != 0)
+                    if (minPenPressure > 0f && ev.getPressure(idx) < minPenPressure) {
+                        // Light contact (or a bugged pen hovering): wait until it presses for real.
+                        pendingStylusId = ev.getPointerId(idx); pendingErase = erase
+                        requestUnbufferedDispatch(ev)
+                        return true
+                    }
+                    pendingStylusId = -1
                     if (beginStroke(ev, idx, erase, isStylus = true)) requestUnbufferedDispatch(ev)
                     return true
                 }
@@ -720,6 +736,36 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
+                if (drawingPointerId == -1 && pendingStylusId != -1) {
+                    val pi = ev.findPointerIndex(pendingStylusId)
+                    if (pi >= 0) {
+                        lastStylusTime = now
+                        if (ev.getPressure(pi) >= minPenPressure) {
+                            pendingStylusId = -1
+                            beginStroke(ev, pi, pendingErase, isStylus = true)
+                            invalidate()
+                        }
+                    }
+                    return true
+                }
+                if (drawingPointerId != -1 && drawingIsStylus && minPenPressure > 0f && !lassoing && !moving) {
+                    val pi = ev.findPointerIndex(drawingPointerId)
+                    if (pi >= 0 && ev.getPressure(pi) < minPenPressure * PRESSURE_RELEASE_FACTOR) {
+                        // Pen lifted to a hover without leaving the screen: end the stroke here.
+                        if (!strokeConsumed && shapeStart == null) {
+                            val release = minPenPressure * PRESSURE_RELEASE_FACTOR
+                            for (h in 0 until ev.historySize) {
+                                if (ev.getHistoricalPressure(pi, h) >= release) addPoint(ev.getHistoricalX(pi, h), ev.getHistoricalY(pi, h), ev.getHistoricalPressure(pi, h))
+                            }
+                        }
+                        val pid = drawingPointerId
+                        val wasErasing = erasing
+                        lastStylusTime = now
+                        finishStroke()
+                        pendingStylusId = pid; pendingErase = wasErasing
+                        return true
+                    }
+                }
                 if (drawingPointerId != -1) {
                     val pi = ev.findPointerIndex(drawingPointerId)
                     if (pi >= 0 && (lassoing || moving)) {
@@ -760,6 +806,7 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
                 val pid = ev.getPointerId(idx)
                 val canceled = android.os.Build.VERSION.SDK_INT >= 33 && (ev.flags and MotionEvent.FLAG_CANCELED) != 0
                 if (action == MotionEvent.ACTION_UP) palmPointers.clear() else palmPointers -= pid
+                if (pid == pendingStylusId || action == MotionEvent.ACTION_UP) pendingStylusId = -1
                 if (canceled) {
                     // The system decided this contact was a palm.
                     if (pid == drawingPointerId && !drawingIsStylus) { cancelStroke(); return true }
@@ -799,6 +846,7 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
                 if (canceled && gestureActive) revertAccidentalScroll()
                 cancelGesture()
                 palmPointers.clear()
+                pendingStylusId = -1
                 return true
             }
         }
@@ -1347,6 +1395,8 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
         private var clipboard: List<Stroke> = emptyList()
         private const val MIN_POINT_DISTANCE = 0.25f
         private const val HOLD_MOVE_TOLERANCE = 1.5f
+        /** A stroke ends when pressure falls below this fraction of [minPenPressure] (hysteresis). */
+        private const val PRESSURE_RELEASE_FACTOR = 0.7f
         /**
          * Highlighter opacity. With a true multiply blend (Android 10+) text under the ink stays
          * black and white paper only takes on the tint; older devices fall back to a lighter overlay.

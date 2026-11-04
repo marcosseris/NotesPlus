@@ -120,7 +120,23 @@ fun SettingsScreen(onBack: () -> Unit) {
             SwitchRow("Snap shapes when you pause", "Hold the pen still at the end of a stroke to turn it into a straight line, rectangle, circle or triangle", ui.settings.autoShape, vm::setAutoShape)
             SwitchRow("Straight highlighter", "Roughly straight highlighter strokes become ruler-straight bars when you lift the pen", ui.settings.straightHighlighter, vm::setStraightHighlighter)
             SwitchRow("Predict pen movement", "Draws a short predicted tail so ink keeps up with the pen; turn off if strokes overshoot", ui.settings.motionPrediction, vm::setMotionPrediction)
-            SwitchRow("Tool rail on the right", "For left-handed use on tablets", ui.settings.railOnRight, vm::setRailOnRight)
+            SwitchRow("Pages panel on the left", "Show the page navigator on the left side on tablets", ui.settings.railOnRight, vm::setRailOnRight)
+            var calibrate by remember { mutableStateOf(false) }
+            ListItem(
+                headlineContent = { Text("Minimum pen pressure") },
+                supportingContent = {
+                    val t = ui.settings.minPenPressure
+                    Text(if (t <= 0f) "Off · the pen draws as soon as it touches. Calibrate if your pen draws while hovering."
+                        else "${(t * 100).toInt()}% · the pen only draws when pressed at least this hard")
+                },
+                trailingContent = { TextButton(onClick = { calibrate = true }) { Text("Calibrate") } },
+                modifier = Modifier.clickable { calibrate = true }
+            )
+            if (calibrate) PressureCalibrationDialog(
+                initial = ui.settings.minPenPressure,
+                onSave = { vm.setMinPenPressure(it); calibrate = false },
+                onDismiss = { calibrate = false }
+            )
             ListItem(
                 headlineContent = { Text("Colour palettes") },
                 supportingContent = { Text("Long-press a swatch in the editor to change it. Reset restores the built-in colours.") },
