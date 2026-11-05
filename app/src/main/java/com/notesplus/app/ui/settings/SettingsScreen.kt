@@ -116,7 +116,10 @@ fun SettingsScreen(onBack: () -> Unit) {
             Section("Pen & touch")
             SwitchRow("Palm guard", "One finger never moves the page or draws; scroll and zoom with two fingers. Large contacts and touches near the pen are ignored either way.", ui.settings.palmGuard, vm::setPalmGuard)
             SwitchRow("Draw with finger", "When off, fingers only scroll and zoom (recommended with a stylus)", ui.settings.fingerDrawing, vm::setFingerDrawing)
-            SwitchRow("Stylus button erases", "Hold the pen's side button to erase", ui.settings.stylusButtonErases, vm::setStylusButtonErases)
+            StylusButtonSettings(
+                mode = ui.settings.stylusButtonMode, press = ui.settings.stylusPressSignal, release = ui.settings.stylusReleaseSignal,
+                onMode = vm::setStylusButtonMode, onLearned = vm::setStylusButtonSignals
+            )
             SwitchRow("Snap shapes when you pause", "Hold the pen still at the end of a stroke to turn it into a straight line, rectangle, circle or triangle", ui.settings.autoShape, vm::setAutoShape)
             SwitchRow("Straight highlighter", "Roughly straight highlighter strokes become ruler-straight bars when you lift the pen", ui.settings.straightHighlighter, vm::setStraightHighlighter)
             SwitchRow("Predict pen movement", "Draws a short predicted tail so ink keeps up with the pen; turn off if strokes overshoot", ui.settings.motionPrediction, vm::setMotionPrediction)

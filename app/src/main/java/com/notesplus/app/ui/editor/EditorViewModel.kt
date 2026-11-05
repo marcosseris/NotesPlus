@@ -3,6 +3,8 @@ package com.notesplus.app.ui.editor
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.notesplus.app.NotesPlusApp
+import com.notesplus.app.data.StylusButtonMode
+import com.notesplus.app.input.StylusButtons
 import com.notesplus.app.data.db.NoteEntity
 import com.notesplus.app.editor.CompositePageSource
 import com.notesplus.app.editor.DocumentView
@@ -45,7 +47,9 @@ data class EditorState(
     val highlighterWidth: Float = 14f,
     val eraserRadius: Float = 10f,
     val fingerDraws: Boolean = false,
-    val stylusButtonErases: Boolean = true,
+    val stylusButtonMode: StylusButtonMode = StylusButtonMode.HOLD,
+    val stylusPressSignal: String = StylusButtons.DEFAULT_PRESS,
+    val stylusReleaseSignal: String = StylusButtons.DEFAULT_RELEASE,
     val canUndo: Boolean = false,
     val canRedo: Boolean = false,
     val unsaved: Boolean = false,
@@ -116,7 +120,8 @@ class EditorViewModel(private val app: NotesPlusApp, private val noteId: String)
             _state.update {
                 it.copy(
                     penColor = s.penColor, penWidth = s.penWidth, highlighterColor = s.highlighterColor, highlighterWidth = s.highlighterWidth,
-                    eraserRadius = s.eraserRadius, fingerDraws = s.fingerDrawing, stylusButtonErases = s.stylusButtonErases,
+                    eraserRadius = s.eraserRadius, fingerDraws = s.fingerDrawing, stylusButtonMode = s.stylusButtonMode,
+                    stylusPressSignal = s.stylusPressSignal, stylusReleaseSignal = s.stylusReleaseSignal,
                     palmGuard = s.palmGuard,
                     autoShape = s.autoShape, railOnRight = s.railOnRight, motionPrediction = s.motionPrediction,
                     straightHighlighter = s.straightHighlighter, minPenPressure = s.minPenPressure, recentColors = s.recentColors,

@@ -112,6 +112,8 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.notesplus.app.editor.DocumentView
+import com.notesplus.app.data.StylusButtonMode
+import com.notesplus.app.input.StylusButtons
 import com.notesplus.app.ink.InkDocument
 import com.notesplus.app.ink.ShapeKind
 import com.notesplus.app.cloud.SyncStatus
@@ -176,6 +178,44 @@ fun EditorScreen(noteId: String, onBack: () -> Unit) {
             (context as? com.notesplus.app.MainActivity)?.setHighRefreshRate(false)
             vm.savePosition(view?.positionSnapshot())
             vm.flushNow()
+        }
+    }
+
+    // Pen side button → eraser, using the signals learned in Settings.
+    var toolBeforeEraser by remember { mutableStateOf<DocumentView.Tool?>(null) }
+    val buttonMode = state.stylusButtonMode
+    val pressSignal = state.stylusPressSignal
+    val releaseSignal = state.stylusReleaseSignal
+    DisposableEffect(buttonMode, pressSignal, releaseSignal) {
+        StylusButtons.consumedKeys = if (buttonMode == StylusButtonMode.OFF) emptySet()
+            else setOfNotNull(StylusButtons.keyCodeOf(pressSignal), StylusButtons.keyCodeOf(releaseSignal))
+        onDispose { StylusButtons.consumedKeys = emptySet() }
+    }
+    LaunchedEffect(buttonMode, pressSignal, releaseSignal) {
+        if (buttonMode == StylusButtonMode.OFF) return@LaunchedEffect
+        var held = false
+        StylusButtons.signals.collect { sig ->
+            val isPress = when {
+                // Same event for push and release: alternate.
+                pressSignal == releaseSignal -> if (sig == pressSignal) { held = !held; held } else return@collect
+                sig == pressSignal -> true
+                sig == releaseSignal -> false
+                else -> return@collect
+            }
+            val current = vm.state.value.tool
+            when (buttonMode) {
+                StylusButtonMode.HOLD -> if (isPress) {
+                    if (current != DocumentView.Tool.ERASER) { toolBeforeEraser = current; vm.setTool(DocumentView.Tool.ERASER) }
+                } else {
+                    toolBeforeEraser?.let { vm.setTool(it) }
+                    toolBeforeEraser = null
+                }
+                StylusButtonMode.TOGGLE -> if (isPress) {
+                    if (current == DocumentView.Tool.ERASER) { vm.setTool(toolBeforeEraser ?: DocumentView.Tool.PEN); toolBeforeEraser = null }
+                    else { toolBeforeEraser = current; vm.setTool(DocumentView.Tool.ERASER) }
+                }
+                StylusButtonMode.OFF -> Unit
+            }
         }
     }
 
@@ -292,7 +332,8 @@ fun EditorScreen(noteId: String, onBack: () -> Unit) {
                                 v.highlighterColor = state.highlighterColor; v.highlighterWidth = state.highlighterWidth
                                 v.eraserRadius = state.eraserRadius
                                 v.fingerDraws = state.fingerDraws
-                                v.stylusButtonErases = state.stylusButtonErases
+                                v.eraseButtonMask = if (state.stylusButtonMode == StylusButtonMode.HOLD && state.stylusPressSignal.startsWith("btn:"))
+                                    state.stylusPressSignal.split(':')[1].toIntOrNull() ?: 0 else 0
                                 v.shapeKind = state.shapeKind
                                 v.autoShape = state.autoShape
                                 v.motionPrediction = state.motionPrediction

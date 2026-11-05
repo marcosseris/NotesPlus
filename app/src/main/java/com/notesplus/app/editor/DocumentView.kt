@@ -78,7 +78,8 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
     /** Eraser radius in page points. */
     var eraserRadius: Float = 10f
     var fingerDraws: Boolean = false
-    var stylusButtonErases: Boolean = true
+    /** MotionEvent button bits that make the pen erase while held (0 = none). */
+    var eraseButtonMask: Int = MotionEvent.BUTTON_STYLUS_PRIMARY or MotionEvent.BUTTON_SECONDARY
     /**
      * Palm guard: a single finger does nothing on the page (no scroll, no ink); scrolling and
      * zooming take two fingers. Resting palms almost always start as one large contact.
@@ -704,7 +705,7 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
                     if (tool == Tool.PAN) { startGesture(ev); return true }
                     val erase = toolType == MotionEvent.TOOL_TYPE_ERASER ||
                         tool == Tool.ERASER ||
-                        (stylusButtonErases && (ev.buttonState and (MotionEvent.BUTTON_STYLUS_PRIMARY or MotionEvent.BUTTON_SECONDARY)) != 0)
+                        (ev.buttonState and eraseButtonMask) != 0
                     if (minPenPressure > 0f && ev.getPressure(idx) < minPenPressure) {
                         // Light contact (or a bugged pen hovering): wait until it presses for real.
                         pendingStylusId = ev.getPointerId(idx); pendingErase = erase
@@ -863,7 +864,7 @@ class DocumentView @JvmOverloads constructor(context: Context, attrs: AttributeS
         if (tt == MotionEvent.TOOL_TYPE_STYLUS || tt == MotionEvent.TOOL_TYPE_ERASER) {
             lastStylusTime = SystemClock.uptimeMillis()
             val erase = tool == Tool.ERASER || tt == MotionEvent.TOOL_TYPE_ERASER ||
-                (stylusButtonErases && (ev.buttonState and MotionEvent.BUTTON_STYLUS_PRIMARY) != 0)
+                (ev.buttonState and eraseButtonMask) != 0
             if (erase && ev.actionMasked != MotionEvent.ACTION_HOVER_EXIT) {
                 eraserCursor = floatArrayOf(ev.x, ev.y, eraserRadius * baseScale * zoom)
                 invalidate()

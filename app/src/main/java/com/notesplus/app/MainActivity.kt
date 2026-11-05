@@ -4,6 +4,9 @@ import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.Bundle
 import android.view.Display
+import android.view.KeyEvent
+import android.view.MotionEvent
+import com.notesplus.app.input.StylusButtons
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -26,6 +29,21 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent { NotesPlusTheme { AppNav() } }
+    }
+
+    // The pen's side button can arrive as a key or as a pen-button change; both go through
+    // StylusButtons first so it can be learned in Settings and mapped in the editor.
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean =
+        StylusButtons.onKey(event) || super.dispatchKeyEvent(event)
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        StylusButtons.onMotion(ev)
+        return super.dispatchTouchEvent(ev)
+    }
+
+    override fun dispatchGenericMotionEvent(ev: MotionEvent): Boolean {
+        StylusButtons.onMotion(ev)
+        return super.dispatchGenericMotionEvent(ev)
     }
 
     override fun onResume() {

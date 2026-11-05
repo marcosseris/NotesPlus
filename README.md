@@ -40,6 +40,8 @@ show up on your computer too.
   120 Hz where available.
 * **Minimum pen pressure** – for pens that draw while hovering: Settings → Pen & touch →
   Calibrate measures hover vs. writing pressure and only lets real pressure draw.
+* **Pen side button → eraser** – hold to erase or press to switch; Settings → Pen & touch →
+  Learn records which events your pen sends on push and on release (pen buttons or keys).
 * **Self-updating** – every push to the default branch publishes a signed build to GitHub
   Releases; the app installs new builds by itself.
 

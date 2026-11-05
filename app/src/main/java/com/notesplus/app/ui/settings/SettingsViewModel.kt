@@ -7,6 +7,7 @@ import com.notesplus.app.NotesPlusApp
 import com.notesplus.app.cloud.SyncStatus
 import com.notesplus.app.cloud.auth.AuthState
 import com.notesplus.app.data.Settings
+import com.notesplus.app.data.StylusButtonMode
 import com.notesplus.app.data.WriteBackMode
 import com.notesplus.app.data.db.Provider
 import com.notesplus.app.update.UpdateState
@@ -73,7 +74,8 @@ class SettingsViewModel(private val app: NotesPlusApp) : ViewModel() {
     fun setWriteBack(v: WriteBackMode) = viewModelScope.launch { c.prefs.setWriteBack(v) }
     fun setFingerDrawing(v: Boolean) = viewModelScope.launch { c.prefs.setFingerDrawing(v) }
     fun setPalmGuard(v: Boolean) = viewModelScope.launch { c.prefs.setPalmGuard(v) }
-    fun setStylusButtonErases(v: Boolean) = viewModelScope.launch { c.prefs.setStylusButtonErases(v) }
+    fun setStylusButtonMode(v: StylusButtonMode) = viewModelScope.launch { c.prefs.setStylusButtonMode(v) }
+    fun setStylusButtonSignals(press: String, release: String) = viewModelScope.launch { c.prefs.setStylusButtonSignals(press, release) }
     fun setAutoShape(v: Boolean) = viewModelScope.launch { c.prefs.setAutoShape(v) }
     fun setRailOnRight(v: Boolean) = viewModelScope.launch { c.prefs.setRailOnRight(v) }
     fun setMotionPrediction(v: Boolean) = viewModelScope.launch { c.prefs.setMotionPrediction(v) }

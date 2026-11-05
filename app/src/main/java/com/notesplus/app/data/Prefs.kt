@@ -1,6 +1,7 @@
 package com.notesplus.app.data
 
 import android.content.Context
+import com.notesplus.app.input.StylusButtons
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -20,6 +21,13 @@ import kotlinx.coroutines.flow.map
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
 /** How annotations are written back into PDFs on the drive so other devices can see them. */
+/** What the pen's side button does. */
+enum class StylusButtonMode(val label: String, val description: String) {
+    OFF("Off", "The side button does nothing"),
+    HOLD("Hold to erase", "Switch to the eraser while the button is held; back to your tool on release"),
+    TOGGLE("Press to switch", "Each press switches between the eraser and your previous tool")
+}
+
 enum class WriteBackMode(val label: String, val description: String) {
     IN_PLACE("Into the PDF itself", "The PDF on your drive is rewritten with your annotations on a separate layer. The original pages stay inside it untouched."),
     SIBLING("Separate annotated copy", "Keeps the original PDF as is and writes “<name>.annotated.pdf” next to it."),
@@ -53,6 +61,10 @@ data class Settings(
     /** One finger does nothing on the page; scroll and zoom with two fingers (palm-proof). */
     val palmGuard: Boolean = true,
     val stylusButtonErases: Boolean = true,
+    val stylusButtonMode: StylusButtonMode = StylusButtonMode.HOLD,
+    /** Learned side-button signals (see StylusButtons). */
+    val stylusPressSignal: String = StylusButtons.DEFAULT_PRESS,
+    val stylusReleaseSignal: String = StylusButtons.DEFAULT_RELEASE,
     val lastSyncAt: Long = 0L,
     val lastSyncStatus: String = "",
     val penColor: Int = 0xFF1C1C1E.toInt(),
@@ -99,6 +111,9 @@ class Prefs(private val context: Context) {
         val fingerDrawing = booleanPreferencesKey("finger_drawing")
         val palmGuard = booleanPreferencesKey("palm_guard")
         val stylusButtonErases = booleanPreferencesKey("stylus_button_erases")
+        val stylusButtonMode = stringPreferencesKey("stylus_button_mode")
+        val stylusPressSignal = stringPreferencesKey("stylus_press_signal")
+        val stylusReleaseSignal = stringPreferencesKey("stylus_release_signal")
         val lastSyncAt = longPreferencesKey("last_sync_at")
         val lastSyncStatus = stringPreferencesKey("last_sync_status")
         val penColor = intPreferencesKey("pen_color")
@@ -135,6 +150,11 @@ class Prefs(private val context: Context) {
             fingerDrawing = p[K.fingerDrawing] ?: d.fingerDrawing,
             palmGuard = p[K.palmGuard] ?: d.palmGuard,
             stylusButtonErases = p[K.stylusButtonErases] ?: d.stylusButtonErases,
+            // Before the mode existed the only choice was the "Stylus button erases" switch.
+            stylusButtonMode = p[K.stylusButtonMode]?.let { runCatching { StylusButtonMode.valueOf(it) }.getOrNull() }
+                ?: if (p[K.stylusButtonErases] == false) StylusButtonMode.OFF else d.stylusButtonMode,
+            stylusPressSignal = p[K.stylusPressSignal] ?: d.stylusPressSignal,
+            stylusReleaseSignal = p[K.stylusReleaseSignal] ?: d.stylusReleaseSignal,
             lastSyncAt = p[K.lastSyncAt] ?: 0L,
             lastSyncStatus = p[K.lastSyncStatus] ?: "",
             penColor = p[K.penColor] ?: d.penColor,
@@ -174,6 +194,8 @@ class Prefs(private val context: Context) {
     suspend fun setFingerDrawing(v: Boolean) = context.dataStore.edit { it[K.fingerDrawing] = v }
     suspend fun setPalmGuard(v: Boolean) = context.dataStore.edit { it[K.palmGuard] = v }
     suspend fun setStylusButtonErases(v: Boolean) = context.dataStore.edit { it[K.stylusButtonErases] = v }
+    suspend fun setStylusButtonMode(v: StylusButtonMode) = context.dataStore.edit { it[K.stylusButtonMode] = v.name }
+    suspend fun setStylusButtonSignals(press: String, release: String) = context.dataStore.edit { it[K.stylusPressSignal] = press; it[K.stylusReleaseSignal] = release }
     suspend fun setLastSync(at: Long, status: String) = context.dataStore.edit { it[K.lastSyncAt] = at; it[K.lastSyncStatus] = status }
     suspend fun setPen(color: Int, width: Float) = context.dataStore.edit { it[K.penColor] = color; it[K.penWidth] = width }
     suspend fun setHighlighter(color: Int, width: Float) = context.dataStore.edit { it[K.hlColor] = color; it[K.hlWidth] = width }
